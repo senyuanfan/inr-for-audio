@@ -31,7 +31,7 @@ def train(inst, num_hidden_features = 256, num_hidden_layers = 4, omega = 5000, 
     model = Siren(in_features=1, out_features=1, hidden_features=num_hidden_features, 
                         hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
     model.cuda()
-
+    summary(model)
 
     model_input, ground_truth = next(iter(dataloader))
     model_input, ground_truth = model_input.cuda(), ground_truth.cuda()
@@ -61,10 +61,10 @@ def train(inst, num_hidden_features = 256, num_hidden_layers = 4, omega = 5000, 
 
 if __name__ == "__main__":
     insts = ['castanets', 'quartet']
-    hfs = [256, 512]
-    hls = [3, 4, 5]
-    ogs = [3000, 5000, 10000]
-    tps = [5000, 10000]
+    hfs = [512]
+    hls = [5]
+    ogs = [10000]
+    tps = [5000]
 
     for inst in insts:
         for hf in hfs:

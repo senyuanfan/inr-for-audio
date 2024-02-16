@@ -24,6 +24,8 @@ from IPython.display import Audio
 
 import auraloss
 
+from torchsummary import summary
+
 class SineLayer(nn.Module):
     # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of omega_0.
     
@@ -129,7 +131,7 @@ def get_mgrid(sidelen, dim=2):
     sidelen: int
     dim: int'''
     tensors = tuple(dim * [torch.linspace(-1, 1, steps=sidelen)])
-    mgrid = torch.stack(torch.meshgrid(*tensors), dim=-1)
+    mgrid = torch.stack(torch.meshgrid(*tensors, indexing='xy'), dim=-1) # added indexing to eliminate warning
     mgrid = mgrid.reshape(-1, dim)
     return mgrid
 
@@ -138,8 +140,7 @@ class AudioFile(torch.utils.data.Dataset):
         self.rate, self.data = wavfile.read(filename)
         if(len(self.data.shape) > 1):
             self.data = self.data[:, 1]
-        self.data = self.data.astype(np.float32)[0 : duration*self.rate]
-        print("The shape of input data is", self.data.shape)
+        self.data = self.data.astype(np.float32)[0 : duration * self.rate]
         self.timepoints = get_mgrid(len(self.data), 1)
 
     def get_num_samples(self):
