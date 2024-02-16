@@ -8,8 +8,13 @@ import matplotlib.pyplot as plt
 from siren_utils import Siren, AudioFile # Assuming these are defined in siren_utils or relevant modules
 import auraloss
 from torchsummary import summary
+import time
+from tqdm import tqdm
+import numpy as np
 
-def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=5000, total_steps=100, learning_rate=1e-4, lr_decay_step=50, lr_decay_gamma=0.5):
+def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.1):
+    start_time = time.time()
+
     filename = f'data/{inst}.wav'
     sample_rate, _ = wavfile.read(filename)
     input_audio = AudioFile(filename, duration=10) # Hardcoded input length as 10 seconds
@@ -21,41 +26,52 @@ def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=5000, total_
     model.cuda()
     summary(model)
 
-    optimiser = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimiser, step_size=lr_decay_step, gamma=lr_decay_gamma)
-    loss_function = nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
+    mse = nn.MSELoss()
+    mrstft = auraloss.freq.MultiResolutionSTFTLoss()
 
     losses = []
-    for step in range(total_steps):
-        model_input, ground_truth = next(iter(dataloader))
-        model_input, ground_truth = model_input.cuda(), ground_truth.cuda()
 
-        model_output, coords = model(model_input)    
-        loss = loss_function(model_output, ground_truth)
-        losses.append(loss.item())
+    model_input, ground_truth = next(iter(dataloader))
+    model_input, ground_truth = model_input.cuda(), ground_truth.cuda()
+    for step in tqdm(range(total_steps), desc = "Training Progress"):
+        
+        model_output, coords = model(model_input)
+        mse_loss = mse(model_output, ground_truth)
+        mrstft_loss = mrstft(model_output.view(1, 1, -1), ground_truth.view(1, 1, -1))
+        loss = (1 - alpha) * mse_loss + alpha * mrstft_loss
+        losses.append(np.log10(loss.item()))
 
-        optimiser.zero_grad()
+        optimizer.zero_grad()
         loss.backward()
-        optimiser.step()
-        scheduler.step()
+        optimizer.step()
+        scheduler.step(loss)
 
     plt.figure()
     plt.plot(losses)
     plt.title("Training Loss")
     plt.xlabel("Step")
-    plt.ylabel("Loss")
-    savename = f'results/{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}.png'
-    plt.savefig(savename)
+    plt.ylabel("Loss (dB)")
+    savename = f'results/{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
+    plt.savefig(savename + '.png')
     
     final_model_output, _ = model(model_input)
-    torchaudio.save(f'{savename[:-4]}.wav', final_model_output.cpu().detach().reshape(1, -1), sample_rate)
+    torchaudio.save(savename + '.wav', final_model_output.cpu().detach().reshape(1, -1), sample_rate)
+
+    end_time = time.time()
+    print("Time Elapsed: ", end_time-start_time)
 
 if __name__ == "__main__":
     configurations = [
-        {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 5, 'omega': 10000, 'total_steps': 5000},
-        {'inst': 'quartet', 'num_hidden_features': 512, 'num_hidden_layers': 5, 'omega': 10000, 'total_steps': 5000},
-        {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 5, 'omega': 10000, 'total_steps': 5000},
-        {'inst': 'oboe', 'num_hidden_features': 512, 'num_hidden_layers': 5, 'omega': 10000, 'total_steps': 5000}
+        {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
+        {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
+
+        {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.1},
+        {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.1},
+
+        {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.2},
+        {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.2},
     ]
 
     for config in configurations:
