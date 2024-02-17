@@ -12,7 +12,7 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.1):
+def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.0):
     start_time = time.time()
 
     filename = f'data/{inst}.wav'
@@ -32,6 +32,7 @@ def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=22000, total
     mrstft = auraloss.freq.MultiResolutionSTFTLoss()
 
     losses = []
+    lrs = []
 
     model_input, ground_truth = next(iter(dataloader))
     model_input, ground_truth = model_input.cuda(), ground_truth.cuda()
@@ -41,21 +42,35 @@ def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=22000, total
         mse_loss = mse(model_output, ground_truth)
         mrstft_loss = mrstft(model_output.view(1, 1, -1), ground_truth.view(1, 1, -1))
         loss = (1 - alpha) * mse_loss + alpha * mrstft_loss
-        losses.append(np.log10(loss.item()))
+        losses.append(10 * np.log10(loss.item()))
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         scheduler.step(loss)
 
+        current_lr = scheduler.get_last_lr()
+        lrs.append(10 * np.log10(current_lr))
+
     plt.figure()
     plt.plot(losses)
     plt.title("Training Loss")
     plt.xlabel("Step")
     plt.ylabel("Loss (dB)")
-    savename = f'results/{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
+    plt.xlim([0, 20000])
+    savename = f'results/loss-{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
     plt.savefig(savename + '.png')
-    
+
+    plt.figure()
+    plt.plot(lrs)
+    plt.title("Learning Rate")
+    plt.xlabel("Step")
+    plt.xlim([0, 20000])
+    plt.ylabel("Learning Rate (dB)")
+    savename = f'results/lr-{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
+    plt.savefig(savename + '.png')
+        
+    savename = f'results/{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
     final_model_output, _ = model(model_input)
     torchaudio.save(savename + '.wav', final_model_output.cpu().detach().reshape(1, -1), sample_rate)
 
@@ -64,14 +79,19 @@ def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=22000, total
 
 if __name__ == "__main__":
     configurations = [
-        {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
-        {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
+        # {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
+        # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
 
-        {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.1},
-        {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.1},
+        # {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 7, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
+        # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 7, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
 
-        {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.2},
-        {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.2},
+        # {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
+        # {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
+
+        {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0.0},
+        {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0.0},
+        {'inst': 'oboe', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0.0},
+        {'inst': 'quartet', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0.0},
     ]
 
     for config in configurations:
