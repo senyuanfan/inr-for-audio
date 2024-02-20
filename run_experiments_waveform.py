@@ -1,8 +1,7 @@
 import torch
-from torch import nn, optim
+from torch import nn
 from torch.utils.data import DataLoader
 import torchaudio
-from torchaudio import transforms
 from scipy.io import wavfile
 import matplotlib.pyplot as plt
 from siren_utils import Siren, AudioFile # Assuming these are defined in siren_utils or relevant modules
@@ -12,7 +11,7 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train(inst, num_hidden_features=256, num_hidden_layers=4, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.0):
+def train(inst, num_hidden_features=256, num_hidden_layers=5, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.0):
     start_time = time.time()
 
     filename = f'data/{inst}.wav'
