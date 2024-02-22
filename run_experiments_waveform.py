@@ -56,7 +56,7 @@ def train(inst, num_hidden_features=256, num_hidden_layers=5, omega=22000, total
     plt.title("Training Loss")
     plt.xlabel("Step")
     plt.ylabel("Loss (dB)")
-    plt.xlim([0, 20000])
+    plt.xlim([0, total_steps])
     savename = f'results/loss-{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
     plt.savefig(savename + '.png')
 
@@ -64,7 +64,7 @@ def train(inst, num_hidden_features=256, num_hidden_layers=5, omega=22000, total
     plt.plot(lrs)
     plt.title("Learning Rate")
     plt.xlabel("Step")
-    plt.xlim([0, 20000])
+    plt.xlim([0, total_steps])
     plt.ylabel("Learning Rate (dB)")
     savename = f'results/lr-{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
     plt.savefig(savename + '.png')
@@ -87,10 +87,15 @@ if __name__ == "__main__":
         # {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
         # {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
 
-        {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0.0},
-        {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0.0},
-        {'inst': 'oboe', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0.0},
-        {'inst': 'quartet', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0.0},
+        {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
+        {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
+        {'inst': 'oboe', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
+        {'inst': 'quartet', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
+        {'inst': 'glockenspiel', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
+        {'inst': 'harpsichord', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
+        {'inst': 'oboe', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
+        {'inst': 'spgm', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
+        
     ]
 
     for config in configurations:

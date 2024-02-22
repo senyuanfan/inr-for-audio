@@ -11,18 +11,17 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=100, total_steps=100, learning_rate=1e-4, alpha=0.0):
+def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_steps=1000, learning_rate=1e-4, alpha=0.0):
     start_time = time.time()
 
     filename = f'data/{inst}.wav'
-    sample_rate, _ = wavfile.read(filename)
     # input_audio = AudioFile(filename, duration=10) # Hardcoded input length as 10 seconds
     input_spec = SpectrogramFitting(filename, duration=5)
-    (height, width, dim) = input_spec.spectrogram.shape
+    (height, width, dim) = input_spec.stft_real.shape
 
     dataloader = DataLoader(input_spec, shuffle=True, batch_size = 1, pin_memory=True, num_workers=4)
 
-    model = Siren(in_features=3, out_features=1, hidden_features=num_hidden_features, 
+    model = Siren(in_features=2, out_features=2, hidden_features=num_hidden_features, 
                   hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
     model.cuda()
     summary(model)
@@ -74,13 +73,20 @@ def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=100, total_s
     savename = f'results/{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
     final_model_output, _ = model(model_input)
     print("model output shape ", final_model_output.shape)
-    spec_recovered = final_model_output.reshape(height, width, dim) * input_spec.scalar
-    spec_recovered = torch.view_as_complex(spec_recovered)
-    n_fft = 1024 # should be passed in as parameter later
-    signal_recovered = torch.istft(spec_recovered, n_fft, window = torch.hann_window(n_fft).cuda())
-    torchaudio.save(savename + '.wav', signal_recovered.cpu().detach().reshape(1, -1), sample_rate)
 
-    # torchaudio.save(savename + '.wav', final_model_output.cpu().detach().reshape(1, -1), sample_rate)
+    spec_recovered = final_model_output.reshape(height, width, dim) * input_spec.scale
+    spec_recovered = torch.view_as_complex(spec_recovered)
+
+    visualize_stft(input_spec.stft_complex, "original_stft.png")
+    visualize_stft(spec_recovered.cpu(), "fitted_stft.png")
+    
+    signal_recovered = torch.istft(spec_recovered.cpu(), n_fft = 1024, window = input_spec.window)
+    # signal_recovered = torch.istft(input_spec.stft_complex.cpu(), n_fft = 1024, window = input_spec.window)
+
+
+    print("recovered signal shape: ", signal_recovered.shape)
+
+    torchaudio.save(savename + '.wav', signal_recovered.detach().reshape(1, -1), input_spec.sample_rate)
 
     end_time = time.time()
     print("Time Elapsed: ", end_time-start_time)
