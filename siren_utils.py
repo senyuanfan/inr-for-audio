@@ -26,6 +26,26 @@ import auraloss
 
 from torchsummary import summary
 
+
+class ReLU(nn.Module):
+    def __init__(self, in_features, hidden_features, hidden_layers, out_features):
+        super().__init__()
+        
+        self.net = []
+        self.net.append(nn.Linear(in_features, hidden_features, nn.LeakyReLU(0.01)))
+
+        for i in range(hidden_layers):
+            self.net.append(nn.Linear(hidden_features, hidden_features, nn.LeakyReLU(0.01)))
+
+        self.net.append(nn.Linear(hidden_features, out_features)) 
+
+        self.net = nn.Sequential(*self.net)
+    
+    def forward(self, coords):
+        coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
+        output = self.net(coords)
+        return output, coords      
+    
 class SineLayer(nn.Module):
     # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of omega_0.
     
@@ -203,7 +223,9 @@ class SpectrogramFitting(Dataset):
         # self.spectrogram = transform(torch.tensor(self.data))
         self.window = torch.hann_window(n_fft)
         self.stft_complex = torch.stft(self.data, n_fft = n_fft, window=self.window, return_complex = True)
-        self.stft_real = torch.view_as_real(self.stft_complex)
+        
+        # self.stft_real = torch.view_as_real(self.stft_complex)
+        self.stft_real = np.abs(self.stft_complex)
 
         # Convert the spectrogram to dB scale - this compresses the range of the data
         # self.spectrogram = torchaudio.transforms.AmplitudeToDB()(self.spectrogram)
@@ -217,11 +239,12 @@ class SpectrogramFitting(Dataset):
         print("min spectrogram: ", self.stft_real.min())
 
         # The shape of the spectrogram defines the sidelength
-        (height, width, dim) = self.stft_real.shape
+        # (height, width, dim) = self.stft_real.shape
+        height, width = self.stft_real.shape
 
         print("height: ", height)
         print("width: ", width)
-        print("dim: ", dim)
+        # print("dim: ", dim)
 
         height_norm = torch.linspace(-1, 1, steps = height)
         width_norm = torch.linspace(-1, 1, steps = width)
@@ -244,7 +267,10 @@ class SpectrogramFitting(Dataset):
         print("Final grid shape: ", combined_grid.shape)
 
         self.coords = combined_grid.reshape(height * width, -1)
-        self.pixels = self.stft_real.reshape(-1, 2)
+
+        # the last dimension need to be changed for magnitude or complex representations
+        self.pixels = self.stft_real.reshape(-1, 1)
+        # self.pixels = self.stft_real
 
         print("coords shape: ", self.coords.shape)
         print("specs shape: ", self.pixels.shape)
@@ -257,18 +283,8 @@ class SpectrogramFitting(Dataset):
             raise IndexError
         return self.coords, self.pixels
 
-def visualize_stft(stft_result, savename, fs = 44100, cmap='viridis'):
-    """
-    Visualize the magnitude spectrum of the STFT result.
+def visualize_stft(stft_result, savename, cmap='viridis'):
 
-    Parameters:
-    - stft_result: The output tensor from torch.stft(), expected shape is (batch, freq_bins, time_frames, 2)
-    - fs: Sampling frequency of the original signal to calculate the frequency axis.
-    - cmap: Colormap for the magnitude spectrum plot.
-
-    Note: This function assumes stft_result is the output of torch.stft() for a single signal (batch size of 1).
-    """
-    # Assuming stft_result is for a single signal, squeeze out the batch dimension
     print("stft shape: ", stft_result.shape)
     stft_magnitude = np.abs(stft_result.detach().numpy())
 
@@ -277,8 +293,8 @@ def visualize_stft(stft_result, savename, fs = 44100, cmap='viridis'):
     plt.imshow(stft_magnitude, origin='lower', aspect='auto', cmap=cmap)
 
     plt.colorbar(label='Magnitude')
-    plt.xlabel('Time Frame')
-    plt.ylabel('Frequency (Hz)')
+    # plt.xlabel('Time Frame')
+    # plt.ylabel('Frequency (Hz)')
     plt.title('Magnitude Spectrum of the STFT')
     plt.tight_layout()
     plt.savefig(savename)

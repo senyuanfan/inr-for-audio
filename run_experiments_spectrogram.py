@@ -17,12 +17,16 @@ def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_st
     filename = f'data/{inst}.wav'
     # input_audio = AudioFile(filename, duration=10) # Hardcoded input length as 10 seconds
     input_spec = SpectrogramFitting(filename, duration=5)
-    (height, width, dim) = input_spec.stft_real.shape
+    # (height, width, dim) = input_spec.stft_real.shape
+    height, width = input_spec.stft_real.shape
 
     dataloader = DataLoader(input_spec, shuffle=True, batch_size = 1, pin_memory=True, num_workers=4)
 
-    model = Siren(in_features=2, out_features=2, hidden_features=num_hidden_features, 
-                  hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
+    model = Siren(in_features=2, out_features=1, hidden_features=num_hidden_features, 
+                 hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
+
+    # model = ReLU(in_features=2, out_features=2, hidden_features=num_hidden_features, hidden_layers=num_hidden_layers)
+    
     model.cuda()
     summary(model)
 
@@ -74,10 +78,12 @@ def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_st
     final_model_output, _ = model(model_input)
     print("model output shape ", final_model_output.shape)
 
-    spec_recovered = final_model_output.reshape(height, width, dim) * input_spec.scale
-    spec_recovered = torch.view_as_complex(spec_recovered)
+    # perform scaling 
+    print("spectrogram scaling factor: ", input_spec.scale)
+    spec_recovered = final_model_output.reshape(height, width) * input_spec.scale
+    # spec_recovered = torch.view_as_complex(spec_recovered)
 
-    visualize_stft(input_spec.stft_complex, "original_stft.png")
+    visualize_stft(input_spec.stft_complex / input_spec.scale, "original_stft.png")
     visualize_stft(spec_recovered.cpu(), "fitted_stft.png")
     
     signal_recovered = torch.istft(spec_recovered.cpu(), n_fft = 1024, window = input_spec.window)
@@ -95,7 +101,7 @@ if __name__ == "__main__":
 
 
     filename = 'castanets'
-    train(filename)
+    train(filename, total_steps = 1000)
 
    
     # configurations = [
