@@ -11,14 +11,15 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_steps=1000, learning_rate=1e-4, alpha=0.0):
+def train_fft(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_steps=1000, learning_rate=1e-4, alpha=0.0):
+    method = 'fft'
     start_time = time.time()
 
     filename = f'data/{inst}.wav'
     # input_audio = AudioFile(filename, duration=10) # Hardcoded input length as 10 seconds
-    input_spec = SpectrogramFitting(filename, duration=5)
+    input_spec = FFTFitting(filename, duration=5)
     # (height, width, dim) = input_spec.stft_real.shape
-    height, width = input_spec.stft_real.shape
+    height, width = input_spec.dimensions
 
     dataloader = DataLoader(input_spec, shuffle=True, batch_size = 1, pin_memory=True, num_workers=4)
 
@@ -62,7 +63,7 @@ def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_st
     plt.xlabel("Step")
     plt.ylabel("Loss (dB)")
     # plt.xlim([0, 20000])
-    savename = f'results/loss-{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
+    savename = f'results/loss-{inst}-{method}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
     plt.savefig(savename + '.png')
 
     plt.figure()
@@ -71,7 +72,7 @@ def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_st
     plt.xlabel("Step")
     # plt.xlim([0, 20000])
     plt.ylabel("Learning Rate (dB)")
-    savename = f'results/lr-{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
+    savename = f'results/lr-{inst}-{method}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
     plt.savefig(savename + '.png')
         
     savename = f'results/{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
@@ -83,16 +84,14 @@ def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_st
     spec_recovered = final_model_output.reshape(height, width) * input_spec.scale
     # spec_recovered = torch.view_as_complex(spec_recovered)
 
-    visualize_stft(input_spec.stft_complex / input_spec.scale, "original_stft.png")
-    visualize_stft(spec_recovered.cpu(), "fitted_stft.png")
+    visualizer(input_spec.stft_complex / input_spec.scale, f'results/{inst}_original_{method}.png')
+    visualizer(spec_recovered.cpu().detach().numpy(), f'results/{inst}_fitted_{method}.png') # move to cpu, detach from gradients, and convert to numpy
     
-    signal_recovered = torch.istft(spec_recovered.cpu(), n_fft = 1024, window = input_spec.window)
+    # signal_recovered = torch.istft(spec_recovered.cpu(), n_fft = 1024, window = input_spec.window)
     # signal_recovered = torch.istft(input_spec.stft_complex.cpu(), n_fft = 1024, window = input_spec.window)
 
-
-    print("recovered signal shape: ", signal_recovered.shape)
-
-    torchaudio.save(savename + '.wav', signal_recovered.detach().reshape(1, -1), input_spec.sample_rate)
+    # print("recovered signal shape: ", signal_recovered.shape)
+    # torchaudio.save(savename + '.wav', signal_recovered.detach().reshape(1, -1), input_spec.sample_rate)
 
     end_time = time.time()
     print("Time Elapsed: ", end_time-start_time)
@@ -100,8 +99,8 @@ def train(inst, num_hidden_features=256, num_hidden_layers=6, omega=30, total_st
 if __name__ == "__main__":
 
 
-    filename = 'castanets'
-    train(filename, total_steps = 1000)
+    inst = 'castanets'
+    train_fft(inst, total_steps = 100)
 
    
     # configurations = [
