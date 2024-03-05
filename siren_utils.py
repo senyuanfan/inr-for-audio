@@ -15,6 +15,7 @@ import numpy.fft as fft
 import scipy.stats as stats
 
 import scipy.io.wavfile as wavfile
+from scipy.signal import butter, filtfilt
 
 import auraloss
 import mdct
@@ -152,11 +153,13 @@ def get_mgrid(sidelen, dim=2):
     return mgrid
     
 class WaveformFitting(Dataset):
-    def __init__(self, filename, duration):
+    def __init__(self, filename, duration, highpass = False):
         self.sample_rate, self.data = wavfile.read(filename)
         if(len(self.data.shape) > 1):
             self.data = self.data[:, 1]
         self.data = self.data.astype(np.float32)[0 : duration * self.sample_rate]
+        if highpass:
+            self.data = hpfilter(self.data, 100, self.sample_rate)
         self.timepoints = get_mgrid(len(self.data), 1)
         print("timepoints shape: ", self.timepoints.shape)
 
@@ -174,13 +177,16 @@ class WaveformFitting(Dataset):
         return self.timepoints, amplitude
 
 class FFTFitting(Dataset):
-    def __init__(self, filename, duration, n_fft=1024):
+    def __init__(self, filename, duration, n_fft=1024, highpass=False):
         super().__init__()
         # Load the audio file
         self.sample_rate, self.data = wavfile.read(filename)
 
         if len(self.data.shape) > 1:
             self.data = self.data[:, 1]
+        
+        if highpass:
+            self.data = hpfilter(self.data, 100, self.sample_rate)
 
         self.data = torch.from_numpy(self.data.astype(np.float32)[:duration * self.sample_rate]/np.max(np.abs(self.data))) # scaling and normalization is important
 
@@ -230,8 +236,7 @@ class FFTFitting(Dataset):
         # Flatten the grids and stack them to form the desired shape
         combined_grid = torch.stack((h_grid, w_grid), dim=-1)
 
-
-        print("Final grid shape: ", combined_grid.shape)
+        # print("Final grid shape: ", combined_grid.shape)
 
         self.coords = combined_grid.reshape(height * width, -1)
 
@@ -251,13 +256,16 @@ class FFTFitting(Dataset):
         return self.coords, self.pixels
 
 class MDCTFitting(Dataset):
-    def __init__(self, filename, duration, n_fft=1024):
+    def __init__(self, filename, duration, n_fft=1024, highpass = False):
         super().__init__()
         # Load the audio file
         self.sample_rate, self.data = wavfile.read(filename)
 
         if len(self.data.shape) > 1:
             self.data = self.data[:, 1]
+
+        if highpass:
+            self.data = hpfilter(self.data, 150, self.sample_rate)
 
         self.data = torch.from_numpy(self.data.astype(np.float32)[:duration * self.sample_rate]/np.max(np.abs(self.data))) # scaling and normalization is important
 
@@ -302,8 +310,7 @@ class MDCTFitting(Dataset):
         # Flatten the grids and stack them to form the desired shape
         combined_grid = torch.stack((h_grid, w_grid), dim=-1)
 
-
-        print("Final grid shape: ", combined_grid.shape)
+        # print("Final grid shape: ", combined_grid.shape)
 
         self.coords = combined_grid.reshape(height * width, -1)
 
@@ -336,3 +343,8 @@ def visualizer(data2d, savename, cmap='viridis'):
     plt.ylabel('Frequency')
     plt.tight_layout()
     plt.savefig(savename)
+
+def hpfilter(data, cutoff, fs):
+    order = 7
+    b, a = butter(order, cutoff, btype='highpass', fs = fs)
+    return filtfilt(b, a, data)

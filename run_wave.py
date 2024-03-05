@@ -11,13 +11,13 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train_wave(inst, num_hidden_features=256, num_hidden_layers=5, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.0):
-    start_time = time.time()
+def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.0, hp=False):
     method = 'wave'
+    start_time = time.time()
 
     filename = f'data/{inst}.wav'
     # sample_rate, _ = wavfile.read(filename)
-    input_audio = WaveformFitting(filename, duration=10) # Hardcoded input length as 10 seconds
+    input_audio = WaveformFitting(filename, duration=10, highpass=hp) # Hardcoded input length as 10 seconds
 
     dataloader = DataLoader(input_audio, shuffle=True, batch_size=1, pin_memory=True, num_workers=0)
 
@@ -60,7 +60,7 @@ def train_wave(inst, num_hidden_features=256, num_hidden_layers=5, omega=22000, 
     plt.xlabel("Step")
     plt.ylabel("Loss (dB)")
     plt.xlim([0, total_steps])
-    savename = f'results/loss-{inst}-{method}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
+    savename = f'results/loss-{inst}-{method}-{omega}-{total_steps}'
     plt.savefig(savename + '.png')
 
     plt.figure()
@@ -96,7 +96,8 @@ if __name__ == "__main__":
         # {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
         # {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
 
-        {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 44100, 'total_steps': 5000, 'alpha':0.0},
+        {'inst': 'violin', 'tag':'temp', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 44100, 'total_steps': 10000, 'alpha':0.8, 'hp':False},
+        {'inst': 'castanets', 'tag':'temp', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 44100, 'total_steps': 10000, 'alpha':0.8, 'hp':False},
         # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
         # {'inst': 'oboe', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
         # {'inst': 'quartet', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
