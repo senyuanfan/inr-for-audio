@@ -93,6 +93,7 @@ class Siren(nn.Module):
         for i in range(hidden_layers):
             self.net.append(SineLayer(hidden_features, hidden_features, 
                                       is_first=False, omega_0=hidden_omega_0))
+                
 
         if outermost_linear:
             final_linear = nn.Linear(hidden_features, out_features)
@@ -278,7 +279,8 @@ class MDCTFitting(Dataset):
         # self.spectrogram = torchaudio.transforms.AmplitudeToDB()(self.spectrogram)
 
         # Normalize the spectrogram to -1 to 1 range
-        self.scale = self.mdct.max()
+        self.scale = np.max(np.abs(self.mdct))
+        self.scale = 1.0
         self.mdct = self.mdct / self.scale
 
         print("sample rate: ", self.sample_rate)

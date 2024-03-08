@@ -67,6 +67,8 @@ def STMDCT(data, N = 1024):
         # MDCT
         mdct_coefficients[:, i] = MDCT(frame, halfN, halfN)
     
+    # mdct_coefficients = mdct_coefficients.T
+
     return mdct_coefficients
 
 def ISTMDCT(mdct_coefficients, N=1024):
@@ -83,7 +85,8 @@ def ISTMDCT(mdct_coefficients, N=1024):
         np.array: Recovered original data.
     """
 
-    
+    # mdct_coefficients = mdct_coefficients.T
+
     halfN = N // 2
     num_frames = mdct_coefficients.shape[1]
     

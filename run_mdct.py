@@ -11,26 +11,35 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=300, total_steps=1000, learning_rate=1e-4, alpha=0.0, hp=False):
+def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=300, total_steps=10000, learning_rate=1e-5, alpha=0.0, load_checkpoint=False, save_checkpoint=False):
     method = "mdct"
     start_time = time.time()
 
     filename = f'data/{inst}.wav'
-    input_spec = MDCTFitting(filename, duration=5, highpass=hp)
+    input_spec = MDCTFitting(filename, duration=5, highpass=False)
     height, width = input_spec.dimensions
 
     dataloader = DataLoader(input_spec, shuffle=True, batch_size = 1, pin_memory=True, num_workers=4)
 
-    model = Siren(in_features=2, out_features=1, hidden_features=num_hidden_features, 
+    model_path = 'model_checkpoint.pth'
+    optimizer_path = 'optimizer_checkpoint.pth'
+    if load_checkpoint:
+        model = torch.load(model_path)
+        # optimizer = torch.load(optimizer_path)
+        # optimizer = torch.optim.Adam(model.parameters(), lr=1e-7)
+    else:
+        model = Siren(in_features=2, out_features=1, hidden_features=num_hidden_features, 
                  hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
-
+    
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9999)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=200, min_lr=1e-8)
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 1000, gamma = 0.1)
     # model = ReLU(in_features=2, out_features=2, hidden_features=num_hidden_features, hidden_layers=num_hidden_layers)
     
     model.cuda()
-    summary(model)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
+    # summary(model)
+   
     mse = nn.MSELoss()
     mae = nn.L1Loss()
     huber = nn.HuberLoss(reduction='mean', delta=1.0)
@@ -54,9 +63,10 @@ def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        scheduler.step(loss)
+        # scheduler.step() # for StepLR learning rate scheduler,we don't need to pass loss into the step
+        scheduler.step(loss) 
 
-        current_lr = scheduler.get_last_lr()
+        current_lr = scheduler.get_last_lr() 
         lrs.append(10 * np.log10(current_lr))
 
     plt.figure()
@@ -88,18 +98,23 @@ def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
     visualizer(spec_recovered, f"results/[spec]{inst}_{method}-{tag}-fitted.png") # move to cpu, detach from gradients, and convert to numpy
     
     # fucking annoy type converion, tensor to numpy conversion, torchaudio format conversion, etc.
+    print(np.max(spec_recovered))
     signal_recovered = mdct.ISTMDCT(spec_recovered).reshape(-1, 1).astype(np.float32)
 
     savename = f'results/[audio]{inst}-{method}-{tag}-{total_steps}'
     # torchaudio.save(savename + '.wav', torch.from_numpy(signal_recovered.reshape(-1, 1)), input_spec.sample_rate, format = "wav")
-    wavfile.write(savename+".wav", input_spec.sample_rate, signal_recovered)
+    wavfile.write(savename+'.wav', input_spec.sample_rate, signal_recovered)
 
     end_time = time.time()
     print("Time Elapsed: ", end_time-start_time)
 
+    if save_checkpoint:
+        torch.save(model, model_path)
+        torch.save(optimizer, optimizer_path)
+
 if __name__ == "__main__":
 
-   
+    tag = 'rlrop200'
     configurations = [
         # {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
         # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
@@ -110,11 +125,15 @@ if __name__ == "__main__":
         # {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
         # {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
 
-        {'inst': 'castanets', 'tag':'huber', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 10000, 'alpha':1, 'hp':False},
-        {'inst': 'violin', 'tag': 'huber', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 10000, 'alpha':1, 'hp':False},
-        # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 20000, 'alpha':0.0},
-        {'inst': 'oboe', 'tag': 'huber', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 10000, 'alpha':1, 'hp':False},
-        # {'inst': 'glockenspiel', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 20000, 'alpha':0.0},
+      
+        # {'inst': 'castanets', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 15000, 'alpha':0, 'hp':False},
+        # {'inst': 'oboe', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 15000, 'alpha':0, 'hp':False},
+        # {'inst': 'glockenspiel', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 15000, 'alpha':0, 'hp':False},
+
+        {'inst': 'violin', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'castanets', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'oboe', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'glockenspiel', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False}
     ]
 
     for config in configurations:

@@ -11,13 +11,13 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.0, hp=False):
+def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=22000, total_steps=10000, learning_rate=1e-6, alpha=0.0, load_checkpoint=False, save_checkpoint=False):
     method = 'wave'
     start_time = time.time()
 
     filename = f'data/{inst}.wav'
     # sample_rate, _ = wavfile.read(filename)
-    input_audio = WaveformFitting(filename, duration=10, highpass=hp) # Hardcoded input length as 10 seconds
+    input_audio = WaveformFitting(filename, duration=5, highpass=False) # Hardcoded input length as 10 seconds
 
     dataloader = DataLoader(input_audio, shuffle=True, batch_size=1, pin_memory=True, num_workers=0)
 
@@ -27,7 +27,7 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
     summary(model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=200, min_lr=1e-8)
     mae = nn.L1Loss()
     mse = nn.MSELoss()
     mrstft = auraloss.freq.MultiResolutionSTFTLoss()
@@ -60,7 +60,7 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
     plt.xlabel("Step")
     plt.ylabel("Loss (dB)")
     plt.xlim([0, total_steps])
-    savename = f'results/loss-{inst}-{method}-{omega}-{total_steps}'
+    savename = f'results/[loss]{inst}-{method}-{tag}-{total_steps}'
     plt.savefig(savename + '.png')
 
     plt.figure()
@@ -69,10 +69,9 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
     plt.xlabel("Step")
     plt.xlim([0, total_steps])
     plt.ylabel("Learning Rate (dB)")
-    savename = f'results/lr-{inst}-{method}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
+    savename = f'results/[lr]{inst}-{method}-{tag}-{total_steps}'
     plt.savefig(savename + '.png')
         
-    savename = f'results/{inst}-{num_hidden_features}-{num_hidden_layers}-{omega}-{total_steps}'
     final_model_output, _ = model(model_input)
 
     signal_recovered = final_model_output.cpu().detach()
@@ -80,12 +79,16 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
     print("signal recovered dtype: ", signal_recovered.dtype)
     print("signal max: ", np.max(signal_recovered.numpy()))
     print("signal min: ", np.min(signal_recovered.numpy()))
-    torchaudio.save(savename + '.wav', signal_recovered.reshape(1, -1), input_audio.sample_rate)
+    savename = f'results/[audio]{inst}-{method}-{tag}-{total_steps}'
+    # wavfile.write(savename+'.wav', input_spec.sample_rate, signal_recovered)
+    torchaudio.save(savename+'.wav', signal_recovered.reshape(1, -1), input_audio.sample_rate)
 
     end_time = time.time()
     print("Time Elapsed: ", end_time-start_time)
 
 if __name__ == "__main__":
+    
+    tag = 'rlrop200'
     configurations = [
         # {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
         # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
@@ -96,8 +99,6 @@ if __name__ == "__main__":
         # {'inst': 'castanets', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
         # {'inst': 'violin', 'num_hidden_features': 512, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
 
-        {'inst': 'violin', 'tag':'temp', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 44100, 'total_steps': 10000, 'alpha':0.8, 'hp':False},
-        {'inst': 'castanets', 'tag':'temp', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 44100, 'total_steps': 10000, 'alpha':0.8, 'hp':False},
         # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
         # {'inst': 'oboe', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
         # {'inst': 'quartet', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
@@ -105,7 +106,10 @@ if __name__ == "__main__":
         # {'inst': 'harpsichord', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
         # {'inst': 'oboe', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
         # {'inst': 'spgm', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
-        
+        {'inst': 'violin', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'castanets', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'oboe', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'glockenspiel', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False}
     ]
 
     for config in configurations:
