@@ -11,15 +11,19 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=300, total_steps=10000, learning_rate=1e-5, alpha=0.0, load_checkpoint=False, save_checkpoint=False):
+import copy
+import loss_landscapes
+import loss_landscapes.metrics
+
+def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=300, total_steps=10000, learning_rate=1e-6, alpha=0.0, load_checkpoint=False, save_checkpoint=False):
     method = "mdct"
     start_time = time.time()
 
     filename = f'data/{inst}.wav'
-    input_spec = MDCTFitting(filename, duration=5, highpass=False)
+    input_spec = MDCTFitting(filename, duration=10, highpass=False)
     height, width = input_spec.dimensions
 
-    dataloader = DataLoader(input_spec, shuffle=True, batch_size = 1, pin_memory=True, num_workers=4)
+    dataloader = DataLoader(input_spec, shuffle=True, batch_size=1, pin_memory=True, num_workers=4)
 
     model_path = 'model_checkpoint.pth'
     optimizer_path = 'optimizer_checkpoint.pth'
@@ -69,6 +73,25 @@ def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
         current_lr = scheduler.get_last_lr() 
         lrs.append(10 * np.log10(current_lr))
 
+
+    ### plot the latest loss landscape
+    STEPS = 50
+    metric = loss_landscapes.metrics.Loss(mse, model_input.cpu(), ground_truth.cpu())
+
+    model_final = copy.deepcopy(model)
+    loss_data_fin = loss_landscapes.random_plane(model_final.cpu(), metric, distance=1, steps=STEPS, normalization='filter', deepcopy_model=True)
+
+    plt.figure()
+    ax = plt.axes(projection='3d')
+    X = np.array([[j for j in range(STEPS)] for i in range(STEPS)])
+    Y = np.array([[i for _ in range(STEPS)] for i in range(STEPS)])
+    ax.plot_surface(X, Y, loss_data_fin, rstride=1, cstride=1, cmap='viridis', edgecolor='none')
+    ax.set_title('Surface Plot of Loss Landscape')
+    savename = f'results/[scape]{inst}-{method}-{tag}-{total_steps}'
+    plt.savefig(savename + '.png')
+
+    
+    ### plot loss and learning rate history
     plt.figure()
     plt.plot(losses)
     plt.title("Training Loss")
@@ -114,7 +137,7 @@ def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
 
 if __name__ == "__main__":
 
-    tag = 'rlrop200'
+    tag = 'rlrop-e608200-long' # initial learning rate = e-06, decay = 0.8, patience = 200, long input signal
     configurations = [
         # {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
         # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
@@ -130,10 +153,10 @@ if __name__ == "__main__":
         # {'inst': 'oboe', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 15000, 'alpha':0, 'hp':False},
         # {'inst': 'glockenspiel', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 1000, 'total_steps': 15000, 'alpha':0, 'hp':False},
 
-        {'inst': 'violin', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
-        {'inst': 'castanets', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
-        {'inst': 'oboe', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
-        {'inst': 'glockenspiel', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False}
+        {'inst': 'violin', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 10000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'castanets', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 10000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'oboe', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 10000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        {'inst': 'glockenspiel', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 500, 'total_steps': 10000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False}
     ]
 
     for config in configurations:
