@@ -11,13 +11,18 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=22000, total_steps=10000, learning_rate=1e-6, alpha=0.0, load_checkpoint=False, save_checkpoint=False):
+
+import copy
+import loss_landscapes
+import loss_landscapes.metrics
+
+def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=22000, total_steps=10000, learning_rate=1e-4, alpha=0.0, load_checkpoint=False, save_checkpoint=False, visualization=False):
     method = 'wave'
-    start_time = time.time()
+    
 
     filename = f'data/{inst}.wav'
     # sample_rate, _ = wavfile.read(filename)
-    input_audio = WaveformFitting(filename, duration=5, highpass=False) # Hardcoded input length as 10 seconds
+    input_audio = WaveformFitting(filename, duration=20, highpass=False) # Hardcoded input length as 10 seconds
 
     dataloader = DataLoader(input_audio, shuffle=True, batch_size=1, pin_memory=True, num_workers=0)
 
@@ -27,7 +32,7 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
     summary(model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=200, min_lr=1e-8)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=100, min_lr=1e-8)
     mae = nn.L1Loss()
     mse = nn.MSELoss()
     mrstft = auraloss.freq.MultiResolutionSTFTLoss()
@@ -37,14 +42,21 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
 
     model_input, ground_truth = next(iter(dataloader))
     model_input, ground_truth = model_input.cuda(), ground_truth.cuda()
+
+    start_time = time.time()
+    best_loss = 10
     for step in tqdm(range(total_steps), desc = "Training Progress"):
         
-        model_output, coords = model(model_input)
+        model_output = model(model_input)
         mae_loss = mae(model_output, ground_truth)
         mse_loss = mse(model_output, ground_truth)
         # mrstft_loss = mrstft(model_output.view(1, 1, -1), ground_truth.view(1, 1, -1))
         loss = (1 - alpha) * mse_loss + alpha * mae_loss
+        if loss.item() < best_loss:
+            best_loss = loss.item()
         losses.append(10 * np.log10(loss.item()))
+        best_model = model
+        best_iter = step
 
         optimizer.zero_grad()
         loss.backward()
@@ -53,10 +65,35 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
 
         current_lr = scheduler.get_last_lr()
         lrs.append(10 * np.log10(current_lr))
+    
+    ### plot the latest loss landscape
+    if visualization:
+        STEPS = 50
+        metric = loss_landscapes.metrics.Loss(mse, model_input.cpu(), ground_truth.cpu())
+
+        model_final = copy.deepcopy(best_model)
+        loss_data_fin = loss_landscapes.random_plane(model_final.cpu(), metric, distance=5, steps=STEPS, normalization='filter', deepcopy_model=True)
+
+        plt.figure()
+        ax = plt.axes(projection='3d')
+        X = np.array([[j for j in range(STEPS)] for i in range(STEPS)])
+        Y = np.array([[i for _ in range(STEPS)] for i in range(STEPS)])
+        ax.plot_surface(X, Y, loss_data_fin, rstride=1, cstride=1, cmap='viridis', edgecolor='none')
+        ax.set_title('Surface Plot of Loss Landscape')
+        savename = f'results/[scape]{inst}-{method}-{tag}-{total_steps}'
+        plt.savefig(savename + '.png')
+
+    end_time = time.time()
+
+    ### save model
+    if save_checkpoint:
+        savename = f'results/[model]{inst}-{method}-{tag}-{total_steps}'
+        torch.save(best_model.state_dict(), savename+'.pt')
+    ### plot loss and learning rate history
 
     plt.figure()
     plt.plot(losses)
-    plt.title("Training Loss")
+    plt.title(f'Training Loss, Best Iteration: {best_iter}, Total time: {(end_time-start_time)/60:.2f} min')
     plt.xlabel("Step")
     plt.ylabel("Loss (dB)")
     plt.xlim([0, total_steps])
@@ -72,7 +109,7 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
     savename = f'results/[lr]{inst}-{method}-{tag}-{total_steps}'
     plt.savefig(savename + '.png')
         
-    final_model_output, _ = model(model_input)
+    final_model_output = best_model(model_input)
 
     signal_recovered = final_model_output.cpu().detach()
     print("signal recovered shape: ", signal_recovered.shape)
@@ -88,7 +125,7 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
 
 if __name__ == "__main__":
     
-    tag = 'rlrop200'
+    tag = 'rlrop-e408100'
     configurations = [
         # {'inst': 'castanets', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
         # {'inst': 'violin', 'num_hidden_features': 256, 'num_hidden_layers': 6, 'omega': 22000, 'total_steps': 10000, 'alpha':0.0},
@@ -106,10 +143,13 @@ if __name__ == "__main__":
         # {'inst': 'harpsichord', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
         # {'inst': 'oboe', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
         # {'inst': 'spgm', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 20000, 'alpha':0.0},
-        {'inst': 'violin', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
-        {'inst': 'castanets', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
-        {'inst': 'oboe', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
-        {'inst': 'glockenspiel', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 25000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False}
+        {'inst': 'violin', 'tag': tag+'-scale', 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 100, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True},
+        # {'inst': 'castanets', 'tag': tag+'4l', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'omega': 22000, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True},
+
+        # {'inst': 'violin', 'tag': tag+'3l', 'num_hidden_features': 256, 'num_hidden_layers': 3, 'omega': 22000, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True},
+        # {'inst': 'castanets', 'tag': tag+'3l', 'num_hidden_features': 256, 'num_hidden_layers': 3, 'omega': 22000, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True},
+        # {'inst': 'oboe', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False},
+        # {'inst': 'glockenspiel', 'tag': tag, 'num_hidden_features': 256, 'num_hidden_layers': 5, 'omega': 22000, 'total_steps': 40000, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':False}
     ]
 
     for config in configurations:

@@ -57,6 +57,7 @@ class SineLayer(nn.Module):
         super().__init__()
         self.omega_0 = omega_0
         self.is_first = is_first
+        self.out_features = out_features
         
         self.in_features = in_features
         self.linear = nn.Linear(in_features, out_features, bias=bias)
@@ -72,14 +73,55 @@ class SineLayer(nn.Module):
                 self.linear.weight.uniform_(-np.sqrt(6 / self.in_features) / self.omega_0, 
                                              np.sqrt(6 / self.in_features) / self.omega_0)
         
+    # def forward(self, input):
+    #     if self.is_first:
+    #         # print('input shape:', input.shape)
+    #         linear_output = self.linear(input)
+    #         # print('linear output shape:', linear_output.shape)
+    #         output = torch.zeros_like(linear_output)
+    #         for i in range(self.out_features):
+    #             omega_scale = i / self.out_features * self.omega_0
+    #             # print('activation shape', activation.shape)
+    #             output[:, :, i] = torch.sin(omega_scale * linear_output[:, :, i])
+    #     else:
+    #         output = torch.sin(self.omega_0 * self.linear(input))
+        
+    #     return output
     def forward(self, input):
-        return torch.sin(self.omega_0 * self.linear(input))
+        if self.is_first:
+            linear_output = self.linear(input)
+            # Create a tensor of omega_scale values
+            omega_scales = torch.linspace(0, self.omega_0, steps=self.out_features, device=input.device, dtype=input.dtype)
+            omega_scales = omega_scales * (1 / self.out_features)
+            # Expand omega_scales to match the shape of linear_output for broadcasting
+            omega_scales = omega_scales.view(1, 1, self.out_features)
+            # Vectorized operation
+            output = torch.sin(omega_scales * linear_output)
+        else:
+            output = torch.sin(self.omega_0 * self.linear(input))
+        
+        return output
     
     def forward_with_intermediate(self, input): 
         # For visualization of activation distributions
         intermediate = self.omega_0 * self.linear(input)
         return torch.sin(intermediate), intermediate
     
+class CustomActivationFunction(nn.Module):
+    def __init__(self, num_neurons, activation_map):
+        super(CustomActivationFunction, self).__init__()
+        self.num_neurons = num_neurons
+        self.activation_map = activation_map
+    
+    def forward(self, x):
+        # Apply different activation functions based on activation_map
+        for i in range(self.num_neurons):
+            if self.activation_map[i] == 'relu':
+                x[:, i] = F.relu(x[:, i])
+            elif self.activation_map[i] == 'tanh':
+                x[:, i] = torch.tanh(x[:, i])
+            # Add more conditions for different activation functions as needed
+        return x
     
 class Siren(nn.Module):
     def __init__(self, in_features, hidden_features, hidden_layers, out_features, outermost_linear=False, 
@@ -293,6 +335,21 @@ class MDCTFitting(Dataset):
         height, width = self.mdct.shape
         self.dimensions = self.mdct.shape
 
+        # calcualte hearing threshold mask, for attenuating loss function later
+        N = n_fft
+
+        freqs =  np.arange(N)[0:N//2] * self.sample_rate/2/((N//2)-1)+1
+        threshold = Thresh(freqs)
+        threshold = threshold - min(threshold)
+        threshold = threshold.clip(None, 10)
+
+        reduction = (100 - threshold)/100 * 0.2 + 0.8
+        self.mask = np.tile(reduction, (width, 1)).T
+        self.mask = self.mask.reshape(1, -1, 1)
+        print("mask shape: ", self.mask.shape)
+        print("max mask: ", self.mask.max())
+        print("min mask: ", self.mask.min())
+
         print("height: ", height)
         print("width: ", width)
         # print("dim: ", dim)
@@ -351,3 +408,19 @@ def hpfilter(data, cutoff, fs):
     order = 7
     b, a = butter(order, cutoff, btype='highpass', fs = fs)
     return filtfilt(b, a, data)
+
+def Thresh(f):
+    """Returns the threshold in quiet measured in SPL at frequency f (in Hz)"""
+    f_new = f.clip(20,None)
+    Af_db = ( 3.64 * ((f_new/1000)) ** (-0.8) ) - 6.5 * np.exp( -0.6 * ((f_new/1000) - 3.3) ** 2 ) + (10 ** (-3)) * ((f_new / 1000) ** 4)
+    return Af_db
+
+def Intensity(spl):
+    """
+    Returns the intensity  for SPL
+    """
+    # original
+    # return 10 ** ((spl-96) / 10) # TO REPLACE WITH YOUR CODE
+
+    # for MDCT magnitude
+    return 10 ** ((spl-96) / 20)
