@@ -29,7 +29,7 @@ def train_wave(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, 
     model = Siren(in_features=1, out_features=1, hidden_features=num_hidden_features, 
                   hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
     model.cuda()
-    summary(model)
+    # summary(model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=100, min_lr=1e-8)
