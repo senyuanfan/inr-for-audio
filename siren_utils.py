@@ -57,7 +57,6 @@ class SineLayer(nn.Module):
         super().__init__()
         self.omega_0 = omega_0
         self.is_first = is_first
-        self.out_features = out_features
         
         self.in_features = in_features
         self.linear = nn.Linear(in_features, out_features, bias=bias)
@@ -73,6 +72,39 @@ class SineLayer(nn.Module):
                 self.linear.weight.uniform_(-np.sqrt(6 / self.in_features) / self.omega_0, 
                                              np.sqrt(6 / self.in_features) / self.omega_0)
         
+    def forward(self, input):
+        return torch.sin(self.omega_0 * self.linear(input))
+    
+    def forward_with_intermediate(self, input): 
+        # For visualization of activation distributions
+        intermediate = self.omega_0 * self.linear(input)
+        return torch.sin(intermediate), intermediate
+    
+class ScaledSineLayer(nn.Module):
+    # A customized sine layer that sets the omega_0 liearly scaled for each neuron
+    
+    def __init__(self, in_features, out_features, bias=True,
+                 is_first=False, omega_0=30):
+        super().__init__()
+        self.omega_0 = omega_0
+        self.is_first = is_first
+        self.out_features = out_features
+        
+        self.in_features = in_features
+        self.linear = nn.Linear(in_features, out_features, bias=bias)
+        
+        self.init_weights()
+    
+    def init_weights(self):
+        with torch.no_grad():
+            if self.is_first:
+                self.linear.weight.uniform_(-1 / self.in_features, 
+                                             1 / self.in_features)      
+            else:
+                self.linear.weight.uniform_(-np.sqrt(6 / self.in_features) / self.omega_0, 
+                                             np.sqrt(6 / self.in_features) / self.omega_0)
+
+    ## naive implementation
     # def forward(self, input):
     #     if self.is_first:
     #         # print('input shape:', input.shape)
@@ -87,6 +119,8 @@ class SineLayer(nn.Module):
     #         output = torch.sin(self.omega_0 * self.linear(input))
         
     #     return output
+
+    ## vectorized implementation
     def forward(self, input):
         if self.is_first:
             linear_output = self.linear(input)
@@ -107,21 +141,21 @@ class SineLayer(nn.Module):
         intermediate = self.omega_0 * self.linear(input)
         return torch.sin(intermediate), intermediate
     
-class CustomActivationFunction(nn.Module):
-    def __init__(self, num_neurons, activation_map):
-        super(CustomActivationFunction, self).__init__()
-        self.num_neurons = num_neurons
-        self.activation_map = activation_map
+# class CustomActivationFunction(nn.Module):
+#     def __init__(self, num_neurons, activation_map):
+#         super(CustomActivationFunction, self).__init__()
+#         self.num_neurons = num_neurons
+#         self.activation_map = activation_map
     
-    def forward(self, x):
-        # Apply different activation functions based on activation_map
-        for i in range(self.num_neurons):
-            if self.activation_map[i] == 'relu':
-                x[:, i] = F.relu(x[:, i])
-            elif self.activation_map[i] == 'tanh':
-                x[:, i] = torch.tanh(x[:, i])
-            # Add more conditions for different activation functions as needed
-        return x
+#     def forward(self, x):
+#         # Apply different activation functions based on activation_map
+#         for i in range(self.num_neurons):
+#             if self.activation_map[i] == 'relu':
+#                 x[:, i] = F.relu(x[:, i])
+#             elif self.activation_map[i] == 'tanh':
+#                 x[:, i] = torch.tanh(x[:, i])
+#             # Add more conditions for different activation functions as needed
+#         return x
     
 class Siren(nn.Module):
     def __init__(self, in_features, hidden_features, hidden_layers, out_features, outermost_linear=False, 
@@ -186,15 +220,87 @@ class Siren(nn.Module):
 
         return activations
 
-def get_mgrid(sidelen, dim=2):
+class SirenWithTanh(nn.Module):
+    def __init__(self, in_features, hidden_features, hidden_layers, num_tanh, out_features, outermost_linear=False, 
+                 first_omega_0=30, hidden_omega_0=30.):
+        super().__init__()
+        
+        self.net = []
+        self.net.append(SineLayer(in_features, hidden_features, 
+                                  is_first=True, omega_0=first_omega_0))
+
+        # assume num_tanh is less than hidden_layers
+        for i in range(hidden_layers - num_tanh):
+            self.net.append(SineLayer(hidden_features, hidden_features, 
+                                      is_first=False, omega_0=hidden_omega_0))
+                
+        for i in range(num_tanh):
+            fc = nn.Linear(hidden_features, hidden_features)
+            tanh = nn.Tanh()
+            # fc.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
+            #                                   np.sqrt(6 / hidden_features) / hidden_omega_0)
+            
+            self.net.append(fc)
+            self.net.append(tanh)
+
+        if outermost_linear:
+            final_linear = nn.Linear(hidden_features, out_features)
+            
+            with torch.no_grad():
+                final_linear.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
+                                              np.sqrt(6 / hidden_features) / hidden_omega_0)
+                
+            self.net.append(final_linear)
+        else:
+            self.net.append(SineLayer(hidden_features, out_features, 
+                                      is_first=False, omega_0=hidden_omega_0))
+        
+        self.net = nn.Sequential(*self.net)
+    
+    def forward(self, coords):
+        coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
+        output = self.net(coords)
+        # return output, coords   
+        return output     
+
+    def forward_with_activations(self, coords, retain_grad=False):
+        '''Returns not only model output, but also intermediate activations.
+        Only used for visualizing activations later!'''
+        activations = OrderedDict()
+
+        activation_count = 0
+        x = coords.clone().detach().requires_grad_(True)
+        activations['input'] = x
+        for i, layer in enumerate(self.net):
+            if isinstance(layer, SineLayer):
+                x, intermed = layer.forward_with_intermediate(x)
+                
+                if retain_grad:
+                    x.retain_grad()
+                    intermed.retain_grad()
+                    
+                activations['_'.join((str(layer.__class__), "%d" % activation_count))] = intermed
+                activation_count += 1
+            else: 
+                x = layer(x)
+                
+                if retain_grad:
+                    x.retain_grad()
+                    
+            activations['_'.join((str(layer.__class__), "%d" % activation_count))] = x
+            activation_count += 1
+
+        return activations
+
+def get_coord(sidelen, dim=2):
     '''Generates a flattened grid of (x,y,...) coordinates in a range of -1 to 1.
     sidelen: int
     dim: int'''
     tensors = tuple(dim * [torch.linspace(-1, 1, steps=sidelen)])
-    mgrid = torch.stack(torch.meshgrid(*tensors, indexing='ij'), dim=-1) # added indexing='ij' to eliminate warning
-    mgrid = mgrid.reshape(-1, dim)
-    print("mgrid shape:", mgrid.shape)
-    return mgrid
+    coord = torch.stack(torch.meshgrid(*tensors, indexing='ij'), dim=-1) # added indexing='ij' to eliminate warning
+    coord = coord.reshape(-1, dim)
+    # print("mgrid shape:", mgrid.shape)
+    return coord
     
 class WaveformFitting(Dataset):
     def __init__(self, filename, duration, highpass = False):
@@ -204,11 +310,11 @@ class WaveformFitting(Dataset):
         self.data = self.data.astype(np.float32)[0 : duration * self.sample_rate]
         if highpass:
             self.data = hpfilter(self.data, 100, self.sample_rate)
-        self.timepoints = get_mgrid(len(self.data), 1)
-        print("timepoints shape: ", self.timepoints.shape)
+        self.coord = get_coord(len(self.data), 1)
+        # print("timepoints shape: ", self.timepoints.shape)
 
     def get_num_samples(self):
-        return self.timepoints.shape[0]
+        return self.coord.shape[0]
 
     def __len__(self):
         return 1
@@ -218,7 +324,7 @@ class WaveformFitting(Dataset):
         scale = np.max(np.abs(amplitude))
         amplitude = (amplitude / scale)
         amplitude = torch.Tensor(amplitude).view(-1, 1)
-        return self.timepoints, amplitude
+        return self.coord, amplitude
 
 class FFTFitting(Dataset):
     def __init__(self, filename, duration, n_fft=1024, highpass=False):
