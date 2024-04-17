@@ -3,24 +3,12 @@ import torchaudio
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
-import os
 
 import numpy as np
-import matplotlib.pyplot as plt
-
 
 from collections import OrderedDict
-import matplotlib
-import numpy.fft as fft
-import scipy.stats as stats
 
 import scipy.io.wavfile as wavfile
-from scipy.signal import butter, filtfilt
-
-import auraloss
-import mdct
-
-from torchsummary import summary
 
 
 class ReLU(nn.Module):
@@ -79,7 +67,9 @@ class SineLayer(nn.Module):
         # For visualization of activation distributions
         intermediate = self.omega_0 * self.linear(input)
         return torch.sin(intermediate), intermediate
-    
+
+
+
 class ScaledSineLayer(nn.Module):
     # A customized sine layer that sets the omega_0 liearly scaled for each neuron
     
@@ -141,21 +131,63 @@ class ScaledSineLayer(nn.Module):
         intermediate = self.omega_0 * self.linear(input)
         return torch.sin(intermediate), intermediate
     
-# class CustomActivationFunction(nn.Module):
-#     def __init__(self, num_neurons, activation_map):
-#         super(CustomActivationFunction, self).__init__()
-#         self.num_neurons = num_neurons
-#         self.activation_map = activation_map
+class Snake(nn.Module):
+    '''         
+    Implementation of the serpentine-like sine-based periodic activation function:
+    .. math::
+         Snake_a := x + \frac{1}{a} sin^2(ax) = x - \frac{1}{2a}cos{2ax} + \frac{1}{2a}
+    This activation function is able to better extrapolate to previously unseen data,
+    especially in the case of learning periodic functions
+
+    Shape:
+        - Input: (N, *) where * means, any number of additional
+          dimensions
+        - Output: (N, *), same shape as the input
+        
+    Parameters:
+        - a - trainable parameter
     
-#     def forward(self, x):
-#         # Apply different activation functions based on activation_map
-#         for i in range(self.num_neurons):
-#             if self.activation_map[i] == 'relu':
-#                 x[:, i] = F.relu(x[:, i])
-#             elif self.activation_map[i] == 'tanh':
-#                 x[:, i] = torch.tanh(x[:, i])
-#             # Add more conditions for different activation functions as needed
-#         return x
+    References:
+        - This activation function is from this paper by Liu Ziyin, Tilman Hartwig, Masahito Ueda:
+        https://arxiv.org/abs/2006.08195
+        
+    Examples:
+        >>> a1 = snake(256)
+        >>> x = torch.randn(256)
+        >>> x = a1(x)
+    '''
+    def __init__(self, in_features, a=None, trainable=True):
+        '''
+        Initialization.
+        Args:
+            in_features: shape of the input
+            a: trainable parameter
+            trainable: sets `a` as a trainable parameter
+            
+            `a` is initialized to 1 by default, higher values = higher-frequency, 
+            5-50 is a good starting point if you already think your data is periodic, 
+            consider starting lower e.g. 0.5 if you think not, but don't worry, 
+            `a` will be trained along with the rest of your model
+        '''
+        super(Snake,self).__init__()
+        self.in_features = in_features if isinstance(in_features, list) else [in_features]
+
+        # Initialize `a`
+        if a is not None:
+            self.a = nn.Parameter(torch.ones(self.in_features) * a) # create a tensor out of alpha
+        else:            
+            m = torch.distributions.exponential.Exponential(torch.tensor([0.1]))
+            self.a = nn.Parameter((m.rsample(self.in_features)).squeeze()) # random init = mix of frequencies
+
+        self.a.requiresGrad = trainable # set the training of `a` to true
+
+    def forward(self, x):
+        '''
+        Forward pass of the function.
+        Applies the function to the input elementwise.
+        Snake ∶= x + 1/a* sin^2 (xa)
+        '''
+        return  x + (1.0/self.a) * torch.pow(torch.sin(x * self.a), 2)
     
 class Siren(nn.Module):
     def __init__(self, in_features, hidden_features, hidden_layers, out_features, outermost_linear=False, 
@@ -239,7 +271,7 @@ class SirenWithTanh(nn.Module):
             tanh = nn.Tanh()
             # fc.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
             #                                   np.sqrt(6 / hidden_features) / hidden_omega_0)
-            
+
             self.net.append(fc)
             self.net.append(tanh)
 
@@ -292,241 +324,149 @@ class SirenWithTanh(nn.Module):
 
         return activations
 
-def get_coord(sidelen, dim=2):
-    '''Generates a flattened grid of (x,y,...) coordinates in a range of -1 to 1.
-    sidelen: int
-    dim: int'''
-    tensors = tuple(dim * [torch.linspace(-1, 1, steps=sidelen)])
-    coord = torch.stack(torch.meshgrid(*tensors, indexing='ij'), dim=-1) # added indexing='ij' to eliminate warning
-    coord = coord.reshape(-1, dim)
-    # print("mgrid shape:", mgrid.shape)
-    return coord
+class SirenWithTanh(nn.Module):
+    def __init__(self, in_features, hidden_features, hidden_layers, num_tanh, out_features, outermost_linear=False, 
+                 first_omega_0=30, hidden_omega_0=30.):
+        super().__init__()
+        
+        self.net = []
+        self.net.append(SineLayer(in_features, hidden_features, 
+                                  is_first=True, omega_0=first_omega_0))
+
+        # assume num_tanh is less than hidden_layers
+        for i in range(hidden_layers - num_tanh):
+            self.net.append(SineLayer(hidden_features, hidden_features, 
+                                      is_first=False, omega_0=hidden_omega_0))
+                
+        for i in range(num_tanh):
+            fc = nn.Linear(hidden_features, hidden_features)
+            tanh = nn.Tanh()
+            # fc.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
+            #                                   np.sqrt(6 / hidden_features) / hidden_omega_0)
+
+            self.net.append(fc)
+            self.net.append(tanh)
+
+        if outermost_linear:
+            final_linear = nn.Linear(hidden_features, out_features)
+            
+            with torch.no_grad():
+                final_linear.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
+                                              np.sqrt(6 / hidden_features) / hidden_omega_0)
+                
+            self.net.append(final_linear)
+        else:
+            self.net.append(SineLayer(hidden_features, out_features, 
+                                      is_first=False, omega_0=hidden_omega_0))
+        
+        self.net = nn.Sequential(*self.net)
     
-class WaveformFitting(Dataset):
-    def __init__(self, filename, duration, highpass = False):
-        self.sample_rate, self.data = wavfile.read(filename)
-        if(len(self.data.shape) > 1):
-            self.data = self.data[:, 1]
-        self.data = self.data.astype(np.float32)[0 : duration * self.sample_rate]
-        if highpass:
-            self.data = hpfilter(self.data, 100, self.sample_rate)
-        self.coord = get_coord(len(self.data), 1)
-        # print("timepoints shape: ", self.timepoints.shape)
+    def forward(self, coords):
+        coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
+        output = self.net(coords)
+        # return output, coords   
+        return output     
 
-    def get_num_samples(self):
-        return self.coord.shape[0]
+    def forward_with_activations(self, coords, retain_grad=False):
+        '''Returns not only model output, but also intermediate activations.
+        Only used for visualizing activations later!'''
+        activations = OrderedDict()
 
-    def __len__(self):
-        return 1
+        activation_count = 0
+        x = coords.clone().detach().requires_grad_(True)
+        activations['input'] = x
+        for i, layer in enumerate(self.net):
+            if isinstance(layer, SineLayer):
+                x, intermed = layer.forward_with_intermediate(x)
+                
+                if retain_grad:
+                    x.retain_grad()
+                    intermed.retain_grad()
+                    
+                activations['_'.join((str(layer.__class__), "%d" % activation_count))] = intermed
+                activation_count += 1
+            else: 
+                x = layer(x)
+                
+                if retain_grad:
+                    x.retain_grad()
+                    
+            activations['_'.join((str(layer.__class__), "%d" % activation_count))] = x
+            activation_count += 1
 
-    def __getitem__(self, idx):
-        amplitude = self.data
-        scale = np.max(np.abs(amplitude))
-        amplitude = (amplitude / scale)
-        amplitude = torch.Tensor(amplitude).view(-1, 1)
-        return self.coord, amplitude
+        return activations
 
-class FFTFitting(Dataset):
-    def __init__(self, filename, duration, n_fft=1024, highpass=False):
+
+class SirenWithSnake(nn.Module):
+    '''
+    MLP with Snake activations
+    '''
+    def __init__(self, in_features, hidden_features, hidden_layers, num_tanh, out_features, outermost_linear=False, 
+                 first_omega_0=30, hidden_omega_0=30.):
         super().__init__()
-        # Load the audio file
-        self.sample_rate, self.data = wavfile.read(filename)
-
-        if len(self.data.shape) > 1:
-            self.data = self.data[:, 1]
         
-        if highpass:
-            self.data = hpfilter(self.data, 100, self.sample_rate)
+        self.net = []
+        self.net.append(SineLayer(in_features, hidden_features, is_first=True, omega_0=first_omega_0))
 
-        self.data = torch.from_numpy(self.data.astype(np.float32)[:duration * self.sample_rate]/np.max(np.abs(self.data))) # scaling and normalization is important
+        # assume num_tanh is less than hidden_layers
+        for i in range(hidden_layers - num_tanh):
+            self.net.append(SineLayer(hidden_features, hidden_features, 
+                                      is_first=False, omega_0=hidden_omega_0))
+                
+        for i in range(num_tanh):
+            fc = nn.Linear(hidden_features, hidden_features)
+            snake = Snake(hidden_features)
+            # fc.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
+            #                                   np.sqrt(6 / hidden_features) / hidden_omega_0)
 
-        # Generate the spectrogram
-        # transform = torchaudio.transforms.Spectrogram(n_fft=n_fft, power=2)
-        # self.spectrogram = transform(torch.tensor(self.data))
-        self.window = torch.hann_window(n_fft)
-        self.stft_complex = torch.stft(self.data, n_fft = n_fft, window=self.window, return_complex = True)
+            self.net.append(fc)
+            self.net.append(snake)
+
+        if outermost_linear:
+            final_linear = nn.Linear(hidden_features, out_features)
+            
+            with torch.no_grad():
+                final_linear.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
+                                              np.sqrt(6 / hidden_features) / hidden_omega_0)
+                
+            self.net.append(final_linear)
+        else:
+            self.net.append(SineLayer(hidden_features, out_features, 
+                                      is_first=False, omega_0=hidden_omega_0))
         
-        # self.stft_real = torch.view_as_real(self.stft_complex)
-        self.stft_real = np.abs(self.stft_complex)
+        self.net = nn.Sequential(*self.net)
+    
+    def forward(self, coords):
+        coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
+        output = self.net(coords)
+        # return output, coords   
+        return output     
 
-        # Convert the spectrogram to dB scale - this compresses the range of the data
-        # self.spectrogram = torchaudio.transforms.AmplitudeToDB()(self.spectrogram)
+    def forward_with_activations(self, coords, retain_grad=False):
+        '''Returns not only model output, but also intermediate activations.
+        Only used for visualizing activations later!'''
+        activations = OrderedDict()
 
-        # Normalize the spectrogram to -1 to 1 range
-        self.scale = self.stft_real.max()
-        self.stft_real = self.stft_real / self.scale
+        activation_count = 0
+        x = coords.clone().detach().requires_grad_(True)
+        activations['input'] = x
+        for i, layer in enumerate(self.net):
+            if isinstance(layer, SineLayer):
+                x, intermed = layer.forward_with_intermediate(x)
+                
+                if retain_grad:
+                    x.retain_grad()
+                    intermed.retain_grad()
+                    
+                activations['_'.join((str(layer.__class__), "%d" % activation_count))] = intermed
+                activation_count += 1
+            else: 
+                x = layer(x)
+                
+                if retain_grad:
+                    x.retain_grad()
+                    
+            activations['_'.join((str(layer.__class__), "%d" % activation_count))] = x
+            activation_count += 1
 
-        print("sample rate: ", self.sample_rate)
-        print("max spectrogram: ", self.stft_real.max())
-        print("min spectrogram: ", self.stft_real.min())
-
-        # The shape of the spectrogram defines the sidelength
-        # (height, width, dim) = self.stft_real.shape
-        height, width = self.stft_real.shape
-        self.dimensions = self.stft_real.shape
-
-        print("height: ", height)
-        print("width: ", width)
-        # print("dim: ", dim)
-
-        height_norm = torch.linspace(-1, 1, steps = height)
-        width_norm = torch.linspace(-1, 1, steps = width)
-        dim_norm = torch.tensor([-1, 1], dtype=torch.float32)
-
-        # h_grid, w_grid, d_grid = torch.meshgrid(height_norm, width_norm, dim_norm, indexing='ij')
-
-        # combined_grid = torch.stack((h_grid, w_grid, d_grid), dim=-1)
-
-        # h_grid, w_grid, d_grid = torch.meshgrid(height_norm, width_norm, dim_norm, indexing='ij')
-        h_grid, w_grid = torch.meshgrid(height_norm, width_norm, indexing='ij')
-        
-        # To achieve a shape of [513, 1723, 3], you can reshape or combine these grids appropriately.
-        # Assuming you want each grid point to have a coordinate (h, w, d), where d is either -1 or 1:
-
-        # Flatten the grids and stack them to form the desired shape
-        combined_grid = torch.stack((h_grid, w_grid), dim=-1)
-
-        # print("Final grid shape: ", combined_grid.shape)
-
-        self.coords = combined_grid.reshape(height * width, -1)
-
-        # the last dimension need to be changed for magnitude or complex representations
-        self.pixels = self.stft_real.reshape(-1, 1)
-        # self.pixels = self.stft_real
-
-        print("coords shape: ", self.coords.shape)
-        print("specs shape: ", self.pixels.shape)
-
-    def __len__(self):
-        return 1  # Only one item in this dataset
-
-    def __getitem__(self, idx):
-        if idx > 0:
-            raise IndexError
-        return self.coords, self.pixels
-
-class MDCTFitting(Dataset):
-    def __init__(self, filename, duration, n_fft=1024, highpass = False):
-        super().__init__()
-        # Load the audio file
-        self.sample_rate, self.data = wavfile.read(filename)
-
-        if len(self.data.shape) > 1:
-            self.data = self.data[:, 1]
-
-        if highpass:
-            self.data = hpfilter(self.data, 150, self.sample_rate)
-
-        self.data = torch.from_numpy(self.data.astype(np.float32)[:duration * self.sample_rate]/np.max(np.abs(self.data))) # scaling and normalization is important
-
-        # Generate the spectrogram
-        # transform = torchaudio.transforms.Spectrogram(n_fft=n_fft, power=2)
-        # self.spectrogram = transform(torch.tensor(self.data)
-        self.mdct = mdct.STMDCT(self.data, N=n_fft).astype(np.float32)
-
-        # Convert the spectrogram to dB scale - this compresses the range of the data
-        # self.spectrogram = torchaudio.transforms.AmplitudeToDB()(self.spectrogram)
-
-        # Normalize the spectrogram to -1 to 1 range
-        self.scale = np.max(np.abs(self.mdct))
-        self.scale = 1.0
-        self.mdct = self.mdct / self.scale
-
-        print("sample rate: ", self.sample_rate)
-        print("max spectrogram: ", self.mdct.max())
-        print("min spectrogram: ", self.mdct.min())
-
-        # The shape of the spectrogram defines the sidelength
-        # (height, width, dim) = self.stft_real.shape
-        height, width = self.mdct.shape
-        self.dimensions = self.mdct.shape
-
-        # calcualte hearing threshold mask, for attenuating loss function later
-        N = n_fft
-
-        freqs =  np.arange(N)[0:N//2] * self.sample_rate/2/((N//2)-1)+1
-        threshold = Thresh(freqs)
-        threshold = threshold - min(threshold)
-        threshold = threshold.clip(None, 10)
-
-        reduction = (100 - threshold)/100 * 0.2 + 0.8
-        self.mask = np.tile(reduction, (width, 1)).T
-        self.mask = self.mask.reshape(1, -1, 1)
-        print("mask shape: ", self.mask.shape)
-        print("max mask: ", self.mask.max())
-        print("min mask: ", self.mask.min())
-
-        print("height: ", height)
-        print("width: ", width)
-        # print("dim: ", dim)
-
-        height_norm = torch.linspace(-1, 1, steps = height)
-        width_norm = torch.linspace(-1, 1, steps = width)
-
-        # h_grid, w_grid, d_grid = torch.meshgrid(height_norm, width_norm, dim_norm, indexing='ij')
-
-        # combined_grid = torch.stack((h_grid, w_grid, d_grid), dim=-1)
-
-        # h_grid, w_grid, d_grid = torch.meshgrid(height_norm, width_norm, dim_norm, indexing='ij')
-        h_grid, w_grid = torch.meshgrid(height_norm, width_norm, indexing='ij')
-        
-        # To achieve a shape of [513, 1723, 3], you can reshape or combine these grids appropriately.
-        # Assuming you want each grid point to have a coordinate (h, w, d), where d is either -1 or 1:
-
-        # Flatten the grids and stack them to form the desired shape
-        combined_grid = torch.stack((h_grid, w_grid), dim=-1)
-
-        # print("Final grid shape: ", combined_grid.shape)
-
-        self.coords = combined_grid.reshape(height * width, -1)
-
-        # the last dimension need to be changed for magnitude or complex representations
-        self.pixels = self.mdct.reshape(-1, 1)
-
-        print("coords shape: ", self.coords.shape)
-        print("specs shape: ", self.pixels.shape)
-
-    def __len__(self):
-        return 1  # Only one item in this dataset
-
-    def __getitem__(self, idx):
-        if idx > 0:
-            raise IndexError
-        return self.coords, self.pixels
-
-def visualizer(data2d, savename, cmap='viridis'):
-
-    print("Data: ", data2d.shape)
-
-    stft_magnitude = np.abs(data2d)
-
-    # Prepare the plot
-    plt.figure(figsize=(10, 6))
-    plt.imshow(stft_magnitude, origin='lower', aspect='auto', cmap=cmap)
-
-    plt.colorbar(label='Magnitude')
-    plt.xlabel('Time')
-    plt.ylabel('Frequency')
-    plt.tight_layout()
-    plt.savefig(savename)
-
-def hpfilter(data, cutoff, fs):
-    order = 7
-    b, a = butter(order, cutoff, btype='highpass', fs = fs)
-    return filtfilt(b, a, data)
-
-def Thresh(f):
-    """Returns the threshold in quiet measured in SPL at frequency f (in Hz)"""
-    f_new = f.clip(20,None)
-    Af_db = ( 3.64 * ((f_new/1000)) ** (-0.8) ) - 6.5 * np.exp( -0.6 * ((f_new/1000) - 3.3) ** 2 ) + (10 ** (-3)) * ((f_new / 1000) ** 4)
-    return Af_db
-
-def Intensity(spl):
-    """
-    Returns the intensity  for SPL
-    """
-    # original
-    # return 10 ** ((spl-96) / 10) # TO REPLACE WITH YOUR CODE
-
-    # for MDCT magnitude
-    return 10 ** ((spl-96) / 20)
+        return activations

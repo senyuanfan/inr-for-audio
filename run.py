@@ -42,8 +42,10 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
 
     """load model with or without tanh layers appended to the end"""
     if num_tanh > 0:
-        model = SirenWithTanh(in_features=1, out_features=1, hidden_features=num_hidden_features, num_tanh=num_tanh, 
-                    hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
+        # model = SirenWithTanh(in_features=1, out_features=1, hidden_features=num_hidden_features, num_tanh=num_tanh, 
+        #             hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
+        model = SirenWithSnake(in_features=1, out_features=1, hidden_features=num_hidden_features, num_tanh=num_tanh, 
+                hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
     else:
         model = Siren(in_features=1, out_features=1, hidden_features=num_hidden_features, 
                     hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
@@ -92,11 +94,11 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
     
     """loss landsacpe visualization"""
     if visualization:
-        STEPS = 50
+        STEPS = 20
         metric = loss_landscapes.metrics.Loss(mse, model_input.cpu(), ground_truth.cpu())
 
         model_final = copy.deepcopy(best_model)
-        loss_data_fin = loss_landscapes.random_plane(model_final.cpu(), metric, distance=5, steps=STEPS, normalization='filter', deepcopy_model=True)
+        loss_data_fin = loss_landscapes.random_plane(model_final.cpu(), metric, distance=2, steps=STEPS, normalization='filter', deepcopy_model=True)
 
         plt.figure()
         ax = plt.axes(projection='3d')
@@ -104,7 +106,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
         Y = np.array([[i for _ in range(STEPS)] for i in range(STEPS)])
         ax.plot_surface(X, Y, loss_data_fin, rstride=1, cstride=1, cmap='viridis', edgecolor='none')
         ax.set_title('Surface Plot of Loss Landscape')
-        savename = f'{experiment_folder}/loss_landscape'
+        savename = f'{experiment_folder}/landscape'
         plt.savefig(savename+'.png')
 
     end_time = time.time()
@@ -132,7 +134,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
     plt.ylabel("Learning Rate (dB)")
     plt.xlim([0, total_steps])
 
-    savename = f'{experiment_folder}/loss_lr_history'
+    savename = f'{experiment_folder}/loss'
     plt.savefig(savename+'.png')
         
     """save best model output as the recovered signal"""    
@@ -144,7 +146,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
     # print("signal min: ", np.min(signal_recovered.numpy()))
 
     """save the recovered output signal"""
-    savename = f'{experiment_folder}/{inst}_recovered'
+    savename = f'{experiment_folder}/{inst}_out'
     output_filename = savename+'.wav'
     # wavfile.write(savename+'.wav', input_spec.sample_rate, signal_recovered)
     torchaudio.save(savename+'.wav', signal_recovered.reshape(1, -1), input_audio.sample_rate)
@@ -166,31 +168,36 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
     plt.subplot(2,1,2)
     plotspec(recovered, fs, 'Recovered')
 
-    savename = f'{experiment_folder}/spectrogram'
+    savename = f'{experiment_folder}/spec'
     plt.savefig(savename+'.png')
 
 
 if __name__ == "__main__":
     
-    exp_num = 30
-    note = 'tanh_test'
+    '''
+    1. update exp_num
+    2. update note
+    3. update tag for each experiment
+    '''
+    exp_num = 31
+    note = 'snake'
     exp_path = f'results/{exp_num}_{note}'
     while( os.path.exists(exp_path) ):
         exp_num = exp_num + 1
         exp_path = f'results/{exp_num}_{note}'
     os.mkdir(exp_path)
 
-    steps = 10000
+    steps = 15000
 
     configurations = [
-        # {'experiment_path':exp_path, 'tag':'tanh-0', 'inst': 'violin', 'duration': 3, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':0,
+        {'experiment_path':exp_path, 'tag':'snake-0', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':0,
+         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
+        {'experiment_path':exp_path, 'tag':'snake-2', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':2,
+         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
+        # {'experiment_path':exp_path, 'tag':'snake-3', 'inst': 'violin', 'duration': 3, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':3,
         #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        {'experiment_path':exp_path, 'tag':'tanh-2', 'inst': 'violin', 'duration': 3, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':2,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        {'experiment_path':exp_path, 'tag':'tanh-3', 'inst': 'violin', 'duration': 3, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':3,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        {'experiment_path':exp_path, 'tag':'tanh-4', 'inst': 'violin', 'duration': 3, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
+        {'experiment_path':exp_path, 'tag':'snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
+         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
     ]
 
     for config in configurations:
