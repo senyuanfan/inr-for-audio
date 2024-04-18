@@ -4,7 +4,8 @@ from torch.utils.data import DataLoader
 import torchaudio
 from scipy.io import wavfile
 import matplotlib.pyplot as plt
-from siren_utils import * # Assuming these are defined in siren_utils or relevant modules
+from utils import * # Assuming these are defined in siren_utils or relevant modules
+from models import *
 import auraloss
 from torchsummary import summary
 import time
@@ -15,7 +16,7 @@ import copy
 import loss_landscapes
 import loss_landscapes.metrics
 
-def train_mdct(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=300, total_steps=10000, learning_rate=1e-6, alpha=0.0, load_checkpoint=False, save_checkpoint=False, visualization=False, mask=False):
+def train(inst:str, tag:str, num_hidden_features=256, num_hidden_layers=5, omega=300, total_steps=10000, learning_rate=1e-6, alpha=0.0, load_checkpoint=False, save_checkpoint=False, visualization=False, mask=False):
     method = "mdct"
 
 

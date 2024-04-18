@@ -330,8 +330,7 @@ class SirenWithTanh(nn.Module):
         super().__init__()
         
         self.net = []
-        self.net.append(SineLayer(in_features, hidden_features, 
-                                  is_first=True, omega_0=first_omega_0))
+        self.net.append(SineLayer(in_features, hidden_features, is_first=True, omega_0=first_omega_0))
 
         # assume num_tanh is less than hidden_layers
         for i in range(hidden_layers - num_tanh):
@@ -407,12 +406,11 @@ class SirenWithSnake(nn.Module):
         
         self.net = []
         self.net.append(SineLayer(in_features, hidden_features, is_first=True, omega_0=first_omega_0))
+        # fc = nn.Linear(in_features, hidden_features)
+        # snake = Snake(hidden_features, a=50)
+        # self.net.append(fc)
+        # self.net.append(snake)
 
-        # assume num_tanh is less than hidden_layers
-        for i in range(hidden_layers - num_tanh):
-            self.net.append(SineLayer(hidden_features, hidden_features, 
-                                      is_first=False, omega_0=hidden_omega_0))
-                
         for i in range(num_tanh):
             fc = nn.Linear(hidden_features, hidden_features)
             snake = Snake(hidden_features)
@@ -422,6 +420,11 @@ class SirenWithSnake(nn.Module):
             self.net.append(fc)
             self.net.append(snake)
 
+        # assume num_tanh is less than hidden_layers
+        for i in range(hidden_layers - num_tanh):
+            self.net.append(SineLayer(hidden_features, hidden_features, 
+                                      is_first=False, omega_0=hidden_omega_0))
+                
         if outermost_linear:
             final_linear = nn.Linear(hidden_features, out_features)
             

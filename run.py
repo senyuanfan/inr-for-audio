@@ -179,7 +179,7 @@ if __name__ == "__main__":
     2. update note
     3. update tag for each experiment
     '''
-    exp_num = 31
+    exp_num = 33
     note = 'snake'
     exp_path = f'results/{exp_num}_{note}'
     while( os.path.exists(exp_path) ):
@@ -190,14 +190,20 @@ if __name__ == "__main__":
     steps = 15000
 
     configurations = [
-        {'experiment_path':exp_path, 'tag':'snake-0', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':0,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
-        {'experiment_path':exp_path, 'tag':'snake-2', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':2,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
-        # {'experiment_path':exp_path, 'tag':'snake-3', 'inst': 'violin', 'duration': 3, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':3,
+        # {'experiment_path':exp_path, 'tag':'snake-0', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':0,
         #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        {'experiment_path':exp_path, 'tag':'snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
+        # {'experiment_path':exp_path, 'tag':'snake-2', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':2,
+        #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
+        # # {'experiment_path':exp_path, 'tag':'snake-3', 'inst': 'violin', 'duration': 3, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':3,
+        # #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
+        {'experiment_path':exp_path, 'tag':'violin-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
+         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
+        {'experiment_path':exp_path, 'tag':'castanets-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
+         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
+        {'experiment_path':exp_path, 'tag':'dire-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
+         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
+        {'experiment_path':exp_path, 'tag':'oboe-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
+         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
     ]
 
     for config in configurations:
