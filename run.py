@@ -12,7 +12,6 @@ import time
 from tqdm import tqdm
 import numpy as np
 
-
 import copy
 import loss_landscapes
 import loss_landscapes.metrics
@@ -30,26 +29,35 @@ def plotspec(signal, fs, title):
     plt.xlabel('Time (s)')
     plt.ylabel('Frequency (Hz)')
 
-def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', num_hidden_features=256, num_hidden_layers=4, num_tanh=2, omega=22000, total_steps=25000, learning_rate=1e-4, min_learning_rate=1e-6, alpha=0.0, load_checkpoint=False, save_checkpoint=False, visualization=False):
+def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', num_hidden_features=256, num_sine=0, num_snake=4, num_tanh=0, omega=22000, total_steps=25000, learning_rate=1e-4, min_learning_rate=1e-6, alpha=0.0, load_checkpoint=False, save_checkpoint=False, visualization=False):
     filename = f'data/{inst}.wav'
     experiment_folder = f'{experiment_path}/{tag}-{inst}'
     os.mkdir(experiment_folder)
 
     """load input data from file"""
     # sample_rate, _ = wavfile.read(filename)
-    input_audio = WaveformFitting(filename, duration=duration, highpass=False) # Hardcoded input length as 10 seconds
-    dataloader = DataLoader(input_audio, shuffle=True, batch_size=1, pin_memory=True, num_workers=0)
-
-    """load model with or without tanh layers appended to the end"""
-    if num_tanh > 0:
-        # model = SirenWithTanh(in_features=1, out_features=1, hidden_features=num_hidden_features, num_tanh=num_tanh, 
-        #             hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
-        model = SirenWithSnake(in_features=1, out_features=1, hidden_features=num_hidden_features, num_tanh=num_tanh, 
-                hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
+    if method == 'wave':
+        input_audio = WaveformFitting(filename, duration=duration)
+        dataloader = DataLoader(input_audio, shuffle=True, batch_size=1, pin_memory=True, num_workers=4)
+    elif method == 'mdct':
+        N = 2048
+        input_mdct = MDCTFitting(filename, duration=duration, N=N)
+        height, width = input_mdct.dimensions
+        dataloader = DataLoader(input_mdct, shuffle=True, batch_size=1, pin_memory=True, num_workers=4)
     else:
-        model = Siren(in_features=1, out_features=1, hidden_features=num_hidden_features, 
-                    hidden_layers=num_hidden_layers, first_omega_0=omega, outermost_linear=True)
-        
+        print('specify the correct fitting method as wave or mdct')
+
+
+    """load model with or without tanh/snake layers appended to the end"""
+
+    if method == 'wave':
+        input_dimension = 1
+    elif method == 'mdct':
+        input_dimension = 2
+   
+    model = SirenWithSnakeTanh(in_features=input_dimension, out_features=1, hidden_features=num_hidden_features, num_sine=num_sine, num_snake=num_snake, num_tanh=num_tanh, 
+                               outermost_linear=True, first_omega_0=omega, hidden_omega_0=30.)
+
     model.cuda()
     summary(model)
 
@@ -115,7 +123,6 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
     if save_checkpoint:
         savename = f'{experiment_folder}/best_model'
         torch.save(best_model.state_dict(), savename+'.pt')
-    
 
     """plot loss and learning rate history"""
     plt.figure(figsize=(6,10))
@@ -146,17 +153,32 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
     # print("signal min: ", np.min(signal_recovered.numpy()))
 
     """save the recovered output signal"""
-    savename = f'{experiment_folder}/{inst}_out'
-    output_filename = savename+'.wav'
-    # wavfile.write(savename+'.wav', input_spec.sample_rate, signal_recovered)
-    torchaudio.save(savename+'.wav', signal_recovered.reshape(1, -1), input_audio.sample_rate)
+    if method=='wave':
+        savename = f'{experiment_folder}/{inst}_out'
+        output_filename = savename+'.wav'
+
+        # wavfile.write(savename+'.wav', input_spec.sample_rate, signal_recovered)
+        torchaudio.save(savename+'.wav', signal_recovered.reshape(1, -1), input_audio.sample_rate)
+    elif method=='mdct':
+        print("mdct scaling factor: ", input_mdct.scale)
+        spec_recovered = final_model_output.reshape(height, width) * input_mdct.scale
+        spec_recovered = spec_recovered.cpu().detach().numpy()
+        print("maximum mdct magnitude: ", np.max(spec_recovered))
+        signal_recovered = mdct.ISTMDCT(spec_recovered, N=N).reshape(-1, 1).astype(np.float32)
+
+        savename = f'{experiment_folder}/{inst}_out'
+        output_filename = savename+'.wav'
+
+        wavfile.write(savename+'.wav', input_mdct.sample_rate, signal_recovered)
+    else:
+        print('specify the correct fitting method as wave or mdct')
 
 
     """save the spectrogram comparison"""
     fs, ref = wavfile.read(filename)  
     fs, recovered = wavfile.read(output_filename)
 
-    print(ref[:fs*duration,0].shape)
+    print(ref[:int(fs*(duration-0.5)),0].shape)
     print(recovered.shape)
 
     plt.figure(figsize=(6,10))
@@ -164,7 +186,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', n
                         top=0.9, wspace=0.4,hspace=0.4)
 
     plt.subplot(2,1,1)
-    plotspec(ref[:fs*duration,0], fs, 'Reference')
+    plotspec(ref[:int(fs*(duration-0.5)),0], fs, 'Reference')
     plt.subplot(2,1,2)
     plotspec(recovered, fs, 'Recovered')
 
@@ -180,30 +202,36 @@ if __name__ == "__main__":
     3. update tag for each experiment
     '''
     exp_num = 33
-    note = 'snake'
+    note = 'mdct'
     exp_path = f'results/{exp_num}_{note}'
-    while( os.path.exists(exp_path) ):
-        exp_num = exp_num + 1
-        exp_path = f'results/{exp_num}_{note}'
-    os.mkdir(exp_path)
+    if( os.path.exists(exp_path) == False ):
+        os.mkdir(exp_path)
+
+    #     exp_num = exp_num + 1
+    #     exp_path = f'results/{exp_num}_{note}'
+    # os.mkdir(exp_path)
 
     steps = 15000
 
     configurations = [
-        # {'experiment_path':exp_path, 'tag':'snake-0', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':0,
+        # {'experiment_path':exp_path, 'tag':'violin-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_snake': 4,
         #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        # {'experiment_path':exp_path, 'tag':'snake-2', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':2,
+        # {'experiment_path':exp_path, 'tag':'castanets-snake-4', 'inst': 'castanets', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_snake':4,
         #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        # # {'experiment_path':exp_path, 'tag':'snake-3', 'inst': 'violin', 'duration': 3, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':3,
-        # #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        {'experiment_path':exp_path, 'tag':'violin-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        {'experiment_path':exp_path, 'tag':'castanets-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        {'experiment_path':exp_path, 'tag':'dire-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
-        {'experiment_path':exp_path, 'tag':'oboe-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_hidden_layers': 4, 'num_tanh':4,
-         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
+        # {'experiment_path':exp_path, 'tag':'dire-snake-4', 'inst': 'dire', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_snake':4,
+        #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-6, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':False},
+
+        # {'experiment_path':exp_path, 'tag':'mdct-snake-4', 'inst': 'violin', 'duration': 10, 'method':'mdct', 'num_hidden_features': 256, 'num_snake':4,
+        #  'omega': 2048, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-7, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
+
+        # {'experiment_path':exp_path, 'tag':'wave-snake-4', 'inst': 'violin', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_snake':4,
+        #  'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-7, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
+
+        {'experiment_path':exp_path, 'tag':'mdct-snake-0', 'inst': 'dire', 'duration': 10, 'method':'mdct', 'num_hidden_features': 256, 'num_sine':4, 'num_snake':0,
+         'omega': 2048, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-7, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
+
+        {'experiment_path':exp_path, 'tag':'wave-snake-0', 'inst': 'dire', 'duration': 10, 'method':'wave', 'num_hidden_features': 256, 'num_sine':4, 'num_snake':0,
+         'omega': 22000, 'total_steps': steps, 'learning_rate':1e-4, 'min_learning_rate':1e-7, 'alpha':0, 'load_checkpoint':False, 'save_checkpoint':True, 'visualization':True},
     ]
 
     for config in configurations:

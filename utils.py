@@ -15,7 +15,8 @@ import numpy.fft as fft
 import scipy.stats as stats
 
 import scipy.io.wavfile as wavfile
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, decimate
+import librosa
 
 import mdct
 
@@ -23,7 +24,9 @@ from torchsummary import summary
 
 
 def visualizer(data2d, savename, cmap='viridis'):
-
+    '''
+    STMDCT Visualizer, could also be used for magnitude spectrum
+    '''
     stft_magnitude = np.abs(data2d)
 
     # Prepare the plot
@@ -37,8 +40,13 @@ def visualizer(data2d, savename, cmap='viridis'):
     plt.savefig(savename)
 
 def hpfilter(data, cutoff, fs):
-    order = 7
+    order = 5
     b, a = butter(order, cutoff, btype='highpass', fs = fs)
+    return filtfilt(b, a, data)
+
+def lpfilter(data, cutoff, fs):
+    order = 5
+    b, a = butter(order, cutoff, btype='lowpass', fs = fs)
     return filtfilt(b, a, data)
 
 def Thresh(f):
@@ -72,14 +80,24 @@ def get_coord(sidelen, dim=2):
     return coord
     
 class WaveformFitting(Dataset):
-    def __init__(self, filename, duration, highpass = False):
+    def __init__(self, filename, duration, lp):
         self.sample_rate, self.data = wavfile.read(filename)
         if(len(self.data.shape) > 1):
             self.data = self.data[:, 1]
         self.data = self.data.astype(np.float32)[0 : duration * self.sample_rate]
-        if highpass:
-            self.data = hpfilter(self.data, 100, self.sample_rate)
+
+        cutoff = 8000 # in Hz
+        if lp:
+            self.data = lpfilter(self.data, cutoff, self.sample_rate)
+            self.data = decimate(self.data, q=2)
+            self.sample_rate = self.sample_rate // 2
+        # else:
+        #     # self.data = self.data
+        #     self.data = hpfilter(self.data, cutoff, self.sample_rate)
+        
         self.coord = get_coord(len(self.data), 1)
+
+        print('waveform fitting sample rate:', self.sample_rate)
         # print("timepoints shape: ", self.timepoints.shape)
 
     def get_num_samples(self):
@@ -175,7 +193,7 @@ class FFTFitting(Dataset):
         return self.coords, self.pixels
 
 class MDCTFitting(Dataset):
-    def __init__(self, filename, duration, n_fft=1024, highpass = False):
+    def __init__(self, filename, duration, N=1024, highpass = False):
         super().__init__()
         # Load the audio file
         self.sample_rate, self.data = wavfile.read(filename)
@@ -191,7 +209,7 @@ class MDCTFitting(Dataset):
         # Generate the spectrogram
         # transform = torchaudio.transforms.Spectrogram(n_fft=n_fft, power=2)
         # self.spectrogram = transform(torch.tensor(self.data)
-        self.mdct = mdct.STMDCT(self.data, N=n_fft).astype(np.float32)
+        self.mdct = mdct.STMDCT(self.data, N=N).astype(np.float32)
 
         # Convert the spectrogram to dB scale - this compresses the range of the data
         # self.spectrogram = torchaudio.transforms.AmplitudeToDB()(self.spectrogram)
@@ -211,8 +229,6 @@ class MDCTFitting(Dataset):
         self.dimensions = self.mdct.shape
 
         # calcualte hearing threshold mask, for attenuating loss function later
-        N = n_fft
-
         freqs =  np.arange(N)[0:N//2] * self.sample_rate/2/((N//2)-1)+1
         threshold = Thresh(freqs)
         threshold = threshold - min(threshold)

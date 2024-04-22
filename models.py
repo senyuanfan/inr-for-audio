@@ -325,6 +325,9 @@ class SirenWithTanh(nn.Module):
         return activations
 
 class SirenWithTanh(nn.Module):
+    '''
+    MLP with Tanh activations    
+    '''
     def __init__(self, in_features, hidden_features, hidden_layers, num_tanh, out_features, outermost_linear=False, 
                  first_omega_0=30, hidden_omega_0=30.):
         super().__init__()
@@ -396,22 +399,31 @@ class SirenWithTanh(nn.Module):
         return activations
 
 
-class SirenWithSnake(nn.Module):
+class SirenWithSnakeTanh(nn.Module):
     '''
-    MLP with Snake activations
+    MLP with Snake and Tanh activations
     '''
-    def __init__(self, in_features, hidden_features, hidden_layers, num_tanh, out_features, outermost_linear=False, 
+    def __init__(self, in_features, out_features, hidden_features, num_sine, num_snake, num_tanh, outermost_linear=False, 
                  first_omega_0=30, hidden_omega_0=30.):
         super().__init__()
         
         self.net = []
+
+        '''
+        First layer must be sine
+        '''
         self.net.append(SineLayer(in_features, hidden_features, is_first=True, omega_0=first_omega_0))
         # fc = nn.Linear(in_features, hidden_features)
         # snake = Snake(hidden_features, a=50)
         # self.net.append(fc)
         # self.net.append(snake)
 
-        for i in range(num_tanh):
+               
+        for i in range(num_sine):
+            self.net.append(SineLayer(hidden_features, hidden_features, 
+                                      is_first=False, omega_0=hidden_omega_0))
+                
+        for i in range(num_snake):
             fc = nn.Linear(hidden_features, hidden_features)
             snake = Snake(hidden_features)
             # fc.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
@@ -419,12 +431,16 @@ class SirenWithSnake(nn.Module):
 
             self.net.append(fc)
             self.net.append(snake)
+      
+        for i in range(num_tanh):
+            fc = nn.Linear(hidden_features, hidden_features)
+            tanh = nn.Tanh()
+            # fc.weight.uniform_(-np.sqrt(6 / hidden_features) / hidden_omega_0, 
+            #                                   np.sqrt(6 / hidden_features) / hidden_omega_0)
 
-        # assume num_tanh is less than hidden_layers
-        for i in range(hidden_layers - num_tanh):
-            self.net.append(SineLayer(hidden_features, hidden_features, 
-                                      is_first=False, omega_0=hidden_omega_0))
-                
+            self.net.append(fc)
+            self.net.append(tanh)
+
         if outermost_linear:
             final_linear = nn.Linear(hidden_features, out_features)
             
