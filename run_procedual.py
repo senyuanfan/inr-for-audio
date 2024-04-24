@@ -17,11 +17,12 @@ import copy
 import loss_landscapes
 import loss_landscapes.metrics
 
-def save_configuration(config, filename):
-    """ Save the configuration dictionary to a file """
-    with open(filename, 'w') as file:
-        for key, value in config.items():
-            file.write(f"{key}: {value}\n")
+import json
+
+def save_parameters(experiment_folder, **kwargs):
+    params_path = f"{experiment_folder}/parameters.json"
+    with open(params_path, 'w') as file:
+        json.dump(kwargs, file, indent=4)
 
 def plotspec(signal, fs, title):
     # print('original signal shape', signal.shape)
@@ -31,9 +32,33 @@ def plotspec(signal, fs, title):
     plt.ylabel('Frequency (Hz)')
 
 def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', mode='lp', num_hidden_features=256, num_sine=0, num_snake=4, num_tanh=0, omega=22000, total_steps=25000, learning_rate=1e-4, min_learning_rate=1e-6, alpha=0.0, load_ckpt=False, prev_ckpt_path=None, visualization=False):
+
     filename = f'data/{inst}.wav'
-    experiment_folder = f'{experiment_path}/{tag}-{method}-{inst}'
+    experiment_folder = f'{experiment_path}/{inst}-{method}-{tag}'
     os.mkdir(experiment_folder)
+
+    """save hyperparameters"""
+    params = {
+        'experiment_path': experiment_path,
+        'tag': tag,
+        'inst': inst,
+        'duration': duration,
+        'method': method,
+        'mode': mode,
+        'num_hidden_features': num_hidden_features,
+        'num_sine': num_sine,
+        'num_snake': num_snake,
+        'num_tanh': num_tanh,
+        'omega': omega,
+        'total_steps': total_steps,
+        'learning_rate': learning_rate,
+        'min_learning_rate': min_learning_rate,
+        'alpha': alpha,
+        'load_ckpt': load_ckpt,
+        'prev_ckpt_path': prev_ckpt_path,
+        'visualization': visualization
+    }
+    save_parameters(experiment_folder, **params)
 
     """load model with or without tanh/snake layers appended to the end"""
 
@@ -150,8 +175,8 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', m
         Y = np.array([[i for _ in range(STEPS)] for i in range(STEPS)])
         ax.plot_surface(X, Y, loss_data_fin, rstride=1, cstride=1, cmap='viridis', edgecolor='none')
         ax.set_title('Surface Plot of Loss Landscape')
-        savename = f'{experiment_folder}/landscape'
-        plt.savefig(savename+'.png')
+        savename = f'{experiment_folder}/landscape.png'
+        plt.savefig(savename)
 
     end_time = time.time()
 
@@ -173,8 +198,8 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', m
     plt.ylabel("Learning Rate (dB)")
     plt.xlim([0, total_steps])
 
-    savename = f'{experiment_folder}/loss'
-    plt.savefig(savename+'.png')
+    savename = f'{experiment_folder}/loss.png'
+    plt.savefig(savename)
         
     """save best model output as the recovered signal"""    
     final_model_output = best_model(model_input)
@@ -186,12 +211,12 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', m
 
     """save the recovered output signal"""
     if method=='wave':
-        savename = f'{experiment_folder}/{inst}_out'
-        output_filename = savename+'.wav'
+        savename = f'{experiment_folder}/output.wav'
+        output_filename = savename
 
-        # wavfile.write(savename+'.wav', input_spec.sample_rate, signal_recovered)
+        # wavfile.write(savename, input_spec.sample_rate, signal_recovered)
         print('The input sample rate is: ', input_audio.sample_rate)
-        torchaudio.save(savename+'.wav', signal_recovered.reshape(1, -1), input_audio.sample_rate)
+        torchaudio.save(savename, signal_recovered.reshape(1, -1), input_audio.sample_rate)
     elif method=='mdct':
         print("mdct scaling factor: ", input_mdct.scale)
         spec_recovered = final_model_output.reshape(height, width) * input_mdct.scale
@@ -199,10 +224,10 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', m
         print("maximum mdct magnitude: ", np.max(spec_recovered))
         signal_recovered = mdct.ISTMDCT(spec_recovered, N=N).reshape(-1, 1).astype(np.float32)
 
-        savename = f'{experiment_folder}/{inst}_out'
-        output_filename = savename+'.wav'
+        savename = f'{experiment_folder}/output.wav'
+        output_filename = savename
 
-        wavfile.write(savename+'.wav', input_mdct.sample_rate, signal_recovered)
+        wavfile.write(savename, input_mdct.sample_rate, signal_recovered)
     else:
         print('specify the correct fitting method as wave or mdct')
 
@@ -224,8 +249,8 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, method='wave', m
     plt.subplot(2,1,2)
     plotspec(recovered, fs_rec, 'Recovered')
 
-    savename = f'{experiment_folder}/spec'
-    plt.savefig(savename+'.png')
+    savename = f'{experiment_folder}/spec.png'
+    plt.savefig(savename)
 
     """save the best model as checkpoint"""
     ckpt_path = f'{experiment_folder}/saved_ckpt.pt'
@@ -247,7 +272,7 @@ if __name__ == "__main__":
     2. update note
     3. update tag for each experiment
     '''
-    exp_num = 38
+    exp_num = 39
     note = 'procedual'
     exp_path = f'results/{exp_num}_{note}'
     if( os.path.exists(exp_path) == False ):
@@ -284,22 +309,22 @@ if __name__ == "__main__":
     vis = False
     prev_ckpt_path = None
 
-    prev_ckpt_path = train(experiment_path=exp_path, tag='sin+snake-lp', inst='violin', mode = 'lp', duration=5, total_steps=10000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
-    _ = train(experiment_path=exp_path, tag='sin+snake-full', inst='violin', mode = 'hp', duration=5, total_steps=15000, num_sine=2, num_snake=2, load_ckpt=True, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    prev_ckpt_path = train(experiment_path=exp_path, tag='sin+snake-lp', inst='oboe', mode = 'lp', omega=22000, duration=30, total_steps=10000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    _ = train(experiment_path=exp_path, tag='sin+snake-full', inst='oboe', mode = 'hp', omega=22000, duration=30, total_steps=15000, num_sine=2, num_snake=2, load_ckpt=True, prev_ckpt_path=prev_ckpt_path, visualization=vis)
 
-    prev_ckpt_path = train(experiment_path=exp_path, tag='sin-lp', inst='violin', mode = 'lp', duration=5, total_steps=10000, num_sine=4, num_snake=0, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
-    _ = train(experiment_path=exp_path, tag='sin-full', inst='violin', mode = 'hp', duration=5, total_steps=15000, num_sine=4, num_snake=0, load_ckpt=True, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    prev_ckpt_path = train(experiment_path=exp_path, tag='sin-lp', inst='oboe', mode = 'lp', omega=44000, duration=30, total_steps=10000, num_sine=4, num_snake=0, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    _ = train(experiment_path=exp_path, tag='sin-full', inst='oboe', mode = 'hp', omega=44000, duration=30, total_steps=15000, num_sine=4, num_snake=0, load_ckpt=True, prev_ckpt_path=prev_ckpt_path, visualization=vis)
 
-    _ = train(experiment_path=exp_path, tag='sin+snake-base', inst='violin', mode = 'hp', duration=5, total_steps=25000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    # _ = train(experiment_path=exp_path, tag='sin+snake-base', inst='violin', mode = 'hp', duration=5, total_steps=25000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
 
-    _ = train(experiment_path=exp_path, tag='sin-base', inst='violin', mode = 'hp', duration=5, total_steps=25000, num_sine=4, num_snake=0, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    # _ = train(experiment_path=exp_path, tag='sin-base', inst='violin', mode = 'hp', duration=5, total_steps=25000, num_sine=4, num_snake=0, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
 
-    prev_ckpt_path = train(experiment_path=exp_path, tag='sin+snake-lp', inst='dire', mode = 'lp', duration=5, total_steps=10000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
-    _ = train(experiment_path=exp_path, tag='sin+snake-full', inst='dire', mode = 'hp', duration=5, total_steps=15000, num_sine=2, num_snake=2, load_ckpt=True, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    # prev_ckpt_path = train(experiment_path=exp_path, tag='sin+snake-lp', inst='dire', mode = 'lp', duration=5, total_steps=10000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    # _ = train(experiment_path=exp_path, tag='sin+snake-full', inst='dire', mode = 'hp', duration=5, total_steps=15000, num_sine=2, num_snake=2, load_ckpt=True, prev_ckpt_path=prev_ckpt_path, visualization=vis)
 
-    _ = train(experiment_path=exp_path, tag='sin+snake-base', inst='dire', mode = 'hp', duration=5, total_steps=25000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    # _ = train(experiment_path=exp_path, tag='sin+snake-base', inst='dire', mode = 'hp', duration=5, total_steps=25000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
 
-    prev_ckpt_path = train(experiment_path=exp_path, tag='sin+snake-lp', inst='castanets', mode = 'lp', duration=5, total_steps=10000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
-    _ = train(experiment_path=exp_path, tag='sin+snake-full', inst='castanets', mode = 'hp', duration=5, total_steps=15000, num_sine=2, num_snake=2, load_ckpt=True, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    # prev_ckpt_path = train(experiment_path=exp_path, tag='sin+snake-lp', inst='castanets', mode = 'lp', duration=5, total_steps=10000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    # _ = train(experiment_path=exp_path, tag='sin+snake-full', inst='castanets', mode = 'hp', duration=5, total_steps=15000, num_sine=2, num_snake=2, load_ckpt=True, prev_ckpt_path=prev_ckpt_path, visualization=vis)
 
-    _ = train(experiment_path=exp_path, tag='sin+snake-base', inst='castanets', mode = 'hp', duration=5, total_steps=25000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
+    # _ = train(experiment_path=exp_path, tag='sin+snake-base', inst='castanets', mode = 'hp', duration=5, total_steps=25000, num_sine=2, num_snake=2, load_ckpt=False, prev_ckpt_path=prev_ckpt_path, visualization=vis)
