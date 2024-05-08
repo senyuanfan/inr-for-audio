@@ -80,25 +80,28 @@ def get_coord(sidelen, dim=2):
     return coord
     
 class WaveformFitting(Dataset):
-    def __init__(self, filename, duration, lp):
+    def __init__(self, filename, duration, decimation=1):
         self.sample_rate, self.data = wavfile.read(filename)
         if(len(self.data.shape) > 1):
-            self.data = self.data[:, 1]
+            self.data = self.data[:, 0]
         self.data = self.data.astype(np.float32)[0 : duration * self.sample_rate]
 
-        cutoff = 8000 # in Hz
-        if lp:
-            self.data = lpfilter(self.data, cutoff, self.sample_rate)
-            self.data = decimate(self.data, q=2)
-            self.sample_rate = self.sample_rate // 2
+        # cutoff = 8000 # in Hz
+        if decimation > 1:
+            q = decimation
+            # self.data = lpfilter(self.data, cutoff, self.sample_rate)
+            self.data = decimate(self.data, q=q)
+            self.sample_rate = self.sample_rate // q
         # else:
         #     # self.data = self.data
         #     self.data = hpfilter(self.data, cutoff, self.sample_rate)
-        
+
+        self.height = len(self.data)
+        self.width = 1
+
         self.coord = get_coord(len(self.data), 1)
 
         print('waveform fitting sample rate:', self.sample_rate)
-        # print("timepoints shape: ", self.timepoints.shape)
 
     def get_num_samples(self):
         return self.coord.shape[0]
@@ -113,6 +116,51 @@ class WaveformFitting(Dataset):
         amplitude = torch.Tensor(amplitude).view(-1, 1)
         return self.coord, amplitude
 
+class MultiWaveformFitting(Dataset):
+    def __init__(self, filename, duration, num_channels, lp=False):
+        self.sample_rate, self.data = wavfile.read(filename)
+        self.data = self.data.astype(np.float32)[: duration*self.sample_rate, :num_channels]
+
+        if lp:
+            q = 2
+            decimated_channels = []
+            for i in range(num_channels):
+                # the decimate function will automatically apply low-pass anti-aliasing filter
+                decimated_channel = decimate(self.data[:, i], q, ftype='fir', zero_phase=True)
+                decimated_channels.append(decimated_channel)
+
+            self.data = np.column_stack(decimated_channels)
+            self.sample_rate = self.sample_rate // q
+        
+        self.height, self.width = self.data.shape
+
+        print("height: ", self.height) # number of samples
+        print("width: ", self.width) # number of channels
+
+        print('waveform fitting sample rate:', self.sample_rate)
+        
+        height_norm = torch.linspace(-1, 1, steps = self.height)
+        if num_channels == 1:
+            width_norm = torch.linspace(0, 0, steps = self.width)
+        else:
+            width_norm = torch.linspace(-1, 1, steps = self.width)
+
+        h_grid, w_grid = torch.meshgrid(height_norm, width_norm, indexing='ij')
+        combined_grid = torch.stack((h_grid, w_grid), dim=-1)
+
+        self.coords = combined_grid.reshape(self.height * self.width, -1)
+        self.samples = self.data.reshape(-1, 1)
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, idx):
+        # amplitude = self.data
+        # scale = np.max(np.abs(amplitude))
+        # amplitude = (amplitude / scale)
+        # amplitude = torch.Tensor(amplitude).view(-1, 1)
+        return self.coords, self.samples
+    
 class FFTFitting(Dataset):
     def __init__(self, filename, duration, n_fft=1024, highpass=False):
         super().__init__()
@@ -193,7 +241,7 @@ class FFTFitting(Dataset):
         return self.coords, self.pixels
 
 class MDCTFitting(Dataset):
-    def __init__(self, filename, duration, N=1024, highpass = False):
+    def __init__(self, filename, duration, N=1024, highpass=False, takelog=False):
         super().__init__()
         # Load the audio file
         self.sample_rate, self.data = wavfile.read(filename)
@@ -211,42 +259,57 @@ class MDCTFitting(Dataset):
         # self.spectrogram = transform(torch.tensor(self.data)
         self.mdct = mdct.STMDCT(self.data, N=N).astype(np.float32)
 
+        print("max mdct (w/o normalization): ", np.max(self.mdct))
+        print("min mdct (w/o normalization): ", np.min(self.mdct))
+
         # Convert the spectrogram to dB scale - this compresses the range of the data
         # self.spectrogram = torchaudio.transforms.AmplitudeToDB()(self.spectrogram)
+      
+        if takelog:
+            aMinValue = 1e-8
+            self.shift = np.abs(np.min(self.mdct)) + aMinValue
+            self.mdct = self.mdct + self.shift
 
-        # Normalize the spectrogram to -1 to 1 range
+            print("max mdct (w/ shift): ", np.max(self.mdct))
+            print("min mdct (w/ shift): ", np.min(self.mdct))
+            # Turn output into log
+            self.mdct = np.log(self.mdct)
+
+        # Normalize the spectrogram to -1 to 1 range using mean and standard deviation
+        self.mean = np.mean(self.mdct)
+        # self.std = np.std(self.mdct)
         self.scale = np.max(np.abs(self.mdct))
-        self.scale = 1.0
-        self.mdct = self.mdct / self.scale
-
+        self.mdct = (self.mdct - self.mean) / self.scale
+        
         print("sample rate: ", self.sample_rate)
-        print("max spectrogram: ", self.mdct.max())
-        print("min spectrogram: ", self.mdct.min())
+        print("mdct scale: ", self.scale)
+        print("mdct mean: ", self.mean)
+        print("max mdct (w/ normalization): ", np.max(self.mdct))
+        print("min mdct (w/ normalization): ", np.min(self.mdct))
 
         # The shape of the spectrogram defines the sidelength
         # (height, width, dim) = self.stft_real.shape
-        height, width = self.mdct.shape
-        self.dimensions = self.mdct.shape
+        self.height, self.width = self.mdct.shape
 
         # calcualte hearing threshold mask, for attenuating loss function later
-        freqs =  np.arange(N)[0:N//2] * self.sample_rate/2/((N//2)-1)+1
-        threshold = Thresh(freqs)
-        threshold = threshold - min(threshold)
-        threshold = threshold.clip(None, 10)
+        # freqs =  np.arange(N)[0:N//2] * self.sample_rate/2/((N//2)-1)+1
+        # threshold = Thresh(freqs)
+        # threshold = threshold - min(threshold)
+        # threshold = threshold.clip(None, 10)
 
-        reduction = (100 - threshold)/100 * 0.2 + 0.8
-        self.mask = np.tile(reduction, (width, 1)).T
-        self.mask = self.mask.reshape(1, -1, 1)
-        print("mask shape: ", self.mask.shape)
-        print("max mask: ", self.mask.max())
-        print("min mask: ", self.mask.min())
+        # reduction = (100 - threshold)/100 * 0.2 + 0.8
+        # self.mask = np.tile(reduction, (self.width, 1)).T
+        # self.mask = self.mask.reshape(1, -1, 1)
+        # print("mask shape: ", self.mask.shape)
+        # print("max mask: ", self.mask.max())
+        # print("min mask: ", self.mask.min())
 
-        print("height: ", height)
-        print("width: ", width)
+        print("height: ", self.height)
+        print("width: ", self.width)
         # print("dim: ", dim)
 
-        height_norm = torch.linspace(-1, 1, steps = height)
-        width_norm = torch.linspace(-1, 1, steps = width)
+        height_norm = torch.linspace(-1, 1, steps = self.height)
+        width_norm = torch.linspace(-1, 1, steps = self.width)
 
         # h_grid, w_grid, d_grid = torch.meshgrid(height_norm, width_norm, dim_norm, indexing='ij')
 
@@ -263,7 +326,7 @@ class MDCTFitting(Dataset):
 
         # print("Final grid shape: ", combined_grid.shape)
 
-        self.coords = combined_grid.reshape(height * width, -1)
+        self.coords = combined_grid.reshape(self.height * self.width, -1)
 
         # the last dimension need to be changed for magnitude or complex representations
         self.pixels = self.mdct.reshape(-1, 1)

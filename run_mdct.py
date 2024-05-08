@@ -184,4 +184,4 @@ if __name__ == "__main__":
     ]
 
     for config in configurations:
-        train_mdct(**config)
+        train(**config)
