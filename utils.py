@@ -88,7 +88,7 @@ class WaveformFitting(Dataset):
 
         # cutoff = 8000 # in Hz
         if decimation > 1:
-            q = decimation
+            q = int(decimation)
             # self.data = lpfilter(self.data, cutoff, self.sample_rate)
             self.data = decimate(self.data, q=q)
             self.sample_rate = self.sample_rate // q
@@ -264,7 +264,8 @@ class MDCTFitting(Dataset):
 
         # Convert the spectrogram to dB scale - this compresses the range of the data
         # self.spectrogram = torchaudio.transforms.AmplitudeToDB()(self.spectrogram)
-      
+
+        self.shift = 0.0
         if takelog:
             aMinValue = 1e-8
             self.shift = np.abs(np.min(self.mdct)) + aMinValue
@@ -278,8 +279,9 @@ class MDCTFitting(Dataset):
         # Normalize the spectrogram to -1 to 1 range using mean and standard deviation
         self.mean = np.mean(self.mdct)
         # self.std = np.std(self.mdct)
+        self.mdct = self.mdct - self.mean
         self.scale = np.max(np.abs(self.mdct))
-        self.mdct = (self.mdct - self.mean) / self.scale
+        self.mdct = self.mdct / self.scale
         
         print("sample rate: ", self.sample_rate)
         print("mdct scale: ", self.scale)

@@ -11,6 +11,53 @@ from collections import OrderedDict
 import scipy.io.wavfile as wavfile
 
 
+class PosEncodingNeRF(nn.Module):
+    '''Module to add positional encoding as in NeRF [Mildenhall et al. 2020].'''
+
+    def __init__(self, in_features, sidelength=None, fn_samples=None, use_nyquist=True, num_frequencies=None, scale=2):
+        super().__init__()
+
+        self.in_features = in_features
+        self.scale = scale
+        self.sidelength = sidelength
+        if num_frequencies == None:
+            if self.in_features == 3:
+                self.num_frequencies = 10
+            elif self.in_features == 2:
+                assert sidelength is not None
+                if isinstance(sidelength, int):
+                    sidelength = (sidelength, sidelength)
+                self.num_frequencies = 4
+                if use_nyquist:
+                    self.num_frequencies = self.get_num_frequencies_nyquist(min(sidelength[0], sidelength[1]))
+            elif self.in_features == 1:
+                assert fn_samples is not None
+                self.num_frequencies = 4
+                if use_nyquist:
+                    self.num_frequencies = self.get_num_frequencies_nyquist(fn_samples)
+        else:
+            self.num_frequencies = num_frequencies
+        # self.frequencies_per_axis = (num_frequencies * np.array(sidelength)) // max(sidelength)
+        self.out_dim = in_features + in_features * 2 * self.num_frequencies  # (sum(self.frequencies_per_axis))
+
+    def get_num_frequencies_nyquist(self, samples):
+        nyquist_rate = 1 / (2 * (2 * 1 / samples))
+        return int(np.floor(np.log2(nyquist_rate)))
+
+    def forward(self, coords):
+        coords_pos_enc = coords
+        for i in range(self.num_frequencies):
+
+            for j in range(self.in_features):
+                c = coords[..., j]
+
+                sin = torch.unsqueeze(torch.sin((self.scale ** i) * np.pi * c), -1)
+                cos = torch.unsqueeze(torch.cos((self.scale ** i) * np.pi * c), -1)
+
+                coords_pos_enc = torch.cat((coords_pos_enc, sin, cos), axis=-1)
+
+        return coords_pos_enc
+    
 class ReLU(nn.Module):
     def __init__(self, in_features, hidden_features, hidden_layers, out_features):
         super().__init__()
@@ -258,21 +305,38 @@ class SirenWithSnakeTanh(nn.Module):
     MLP with Snake and Tanh activations
     '''
     def __init__(self, in_features, out_features, hidden_features, num_sine, num_snake, num_tanh, first_linear=False, last_linear=True, 
-                 first_omega_0=30, hidden_omega_0=30., a_initial=50):
+                 first_omega_0=30, hidden_omega_0=30., a_initial=50, num_freq=32, scale=2.0):
         super().__init__()
         
         self.net = []
 
+
+        '''
+        Positional encoding
+        '''
+        if num_freq is not None:
+            pos_out_dim = 2 * num_freq + 1
+            is_first = False
+            self.positional_encoding = PosEncodingNeRF(in_features=in_features,
+                                                        sidelength=None,
+                                                        fn_samples=None,
+                                                        use_nyquist=True,
+                                                        num_frequencies=num_freq,
+                                                        scale=scale)
+        else:
+            self.positional_encoding = nn.Identity()
+            pos_out_dim = in_features
+            is_first = True
         '''
         First layer need to be sine for waveform
         '''
         if first_linear:
-            fc = nn.Linear(in_features, hidden_features)
+            fc = nn.Linear(pos_out_dim, hidden_features)
             snake = Snake(hidden_features, a=50)
             self.net.append(fc)
             self.net.append(snake)
         else:
-            self.net.append(SineLayer(in_features, hidden_features, is_first=True, omega_0=first_omega_0))
+            self.net.append(SineLayer(pos_out_dim, hidden_features, is_first=True, omega_0=first_omega_0))
        
 
                
@@ -314,7 +378,8 @@ class SirenWithSnakeTanh(nn.Module):
     
     def forward(self, coords):
         coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
-        output = self.net(coords)
+        pos_coords = self.positional_encoding(coords)
+        output = self.net(pos_coords)
         # return output, coords   
         return output     
 
