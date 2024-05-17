@@ -31,13 +31,13 @@ def plotspec(signal, fs, title):
     plt.xlabel('Time (s)')
     plt.ylabel('Frequency (Hz)')
 
-def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, method='wave', loss_mode='mse', mode=None, decimation=1, num_hidden_features=256, num_sine=0, num_snake=2, num_tanh=0, num_freq=64, omega=22000, first_linear=False, last_linear=True, hidden_omega=30, a_initial=10, total_steps=25000, learning_rate=1e-3, min_learning_rate=1e-6, alpha=0.0, prev_ckpt_path=None, visualization=False):
+def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, method='wave', loss_mode='mse', mode=None, decimation=1, num_hidden_features=256, num_sine=2, num_snake=2, num_tanh=0, num_freq=64, omega=22000, first_linear=False, last_linear=True, hidden_omega=30, a_initial=0.5, total_steps=25000, learning_rate=1e-3, min_learning_rate=1e-6, alpha=0.0, prev_ckpt_path=None, visualization=False):
 
     # mode: hp for wave, log for mdct
     filename = f'data/{inst}.wav'
     experiment_folder = f'{experiment_path}/{inst}-{method}-{tag}'
 
-    if( os.path.exists(experiment_folder) == True ):
+    while( os.path.exists(experiment_folder) == True ):
         tag = tag + '-2'
         experiment_folder = f'{experiment_path}/{inst}-{method}-{tag}'
 
@@ -111,20 +111,13 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
 
 
     summary(model)
-    param_size = 0
-    buffer_size = 0
-    for param in model.parameters():
-        param_size += param.nelement() * param.element_size()
-    for buffer in model.buffers():
-        buffer_size += buffer.nelement() * buffer.element_size()
-    model_size = (param_size + buffer_size) / 1024 # convert to KB
 
     """define loss function"""
 
     mae = nn.L1Loss()
     mse = nn.MSELoss()
     snr = auraloss.time.SNRLoss()
-    mrstft = auraloss.freq.MultiResolutionSTFTLoss(perceptual_weighting=True, sample_rate=input_data.sample_rate)
+    mrstft = auraloss.freq.MultiResolutionSTFTLoss(perceptual_weighting=False, sample_rate=input_data.sample_rate)
     # mrstft = auraloss.freq.STFTLoss()
 
    
@@ -164,7 +157,8 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
         # current_loss = current_loss.detach().cpu().numpy()
         # losses.append(current_loss)
 
-        current_loss = 10 * np.log10(loss.item())
+        # current_loss = 10 * np.log10(loss.item())
+        current_loss = loss.item()
         losses.append(current_loss)
 
         optimizer.zero_grad()
@@ -173,7 +167,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
         scheduler.step(loss)
 
         current_lr = scheduler.get_last_lr()
-        # lrs.append(10 * np.log10(current_lr))
+        lrs.append(10 * np.log10(current_lr))
         lrs.append(current_lr)
     
     """loss landsacpe visualization"""
@@ -216,7 +210,20 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
     savename = f'{experiment_folder}/loss.png'
     plt.savefig(savename)
         
-    """save best model output as the recovered signal"""    
+    """save best model output as the recovered signal"""   
+    # convert 32-bit model to 16-bit model and calculate the size
+    # model_input = model_input.half()
+    # best_model = best_model.half()
+    # best_model.cuda()
+
+    param_size = 0
+    buffer_size = 0
+    for param in best_model.parameters():
+        param_size += param.nelement() * param.element_size()
+    for buffer in best_model.buffers():
+        buffer_size += buffer.nelement() * buffer.element_size()
+    model_size = (param_size + buffer_size) / 1024 # convert to KB
+
     final_model_output = best_model(model_input)
     if takelog:
         final_model_output = torch.exp(final_model_output)
@@ -233,6 +240,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
 
         # wavfile.write(savename, input_spec.sample_rate, signal_recovered)
         print('The input sample rate is: ', input_data.sample_rate)
+        signal_recovered = signal_recovered.to(torch.float32)
         torchaudio.save(savename, signal_recovered.reshape(input_data.width, input_data.height), input_data.sample_rate)
     elif method=='mdct':
         spec_recovered = final_model_output.reshape(input_data.height, input_data.width) * input_data.scale + input_data.mean - input_data.shift
@@ -270,7 +278,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
     print("recovered signal shape", rec.shape)
 
     plt.figure(figsize=(6,10))
-    plt.subplots_adjust(left=0.15, bottom=0.1, right=0.85, 
+    plt.subplots_adjust(left=0.2, bottom=0.1, right=0.8, 
                         top=0.9, wspace=0.4,hspace=0.4)
 
     plt.subplot(2,1,1)
@@ -283,7 +291,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
 
 
     plt.figure(figsize=(6,10))
-    plt.subplots_adjust(left=0.15, bottom=0.1, right=0.85, 
+    plt.subplots_adjust(left=0.2, bottom=0.1, right=0.8, 
                         top=0.9, wspace=0.4,hspace=0.4)
     
     plt.subplot(2, 1, 1)
@@ -353,8 +361,8 @@ if __name__ == "__main__":
     3. update tag for each experiment
     4. when using method 'wave', set mode to 'hp' or 'lp'; when using method 'mdct', set mode to 'log' or None, for loss function, set mode to 'snr', 'mae' or None (by default mse)
     '''
-    exp_num = 62
-    note = 'ablation_02'
+    exp_num = 68
+    note = 'quantize'
     exp_path = f'results/{exp_num}_{note}'
     if( os.path.exists(exp_path) == False ):
         os.mkdir(exp_path)
@@ -362,12 +370,13 @@ if __name__ == "__main__":
     vis = False
 
 
-    insts = ['violin']
-    alphas = [0.2, 0]
-    num_freqs = [64, None]
+    # insts = ['castanets', 'violin', 'glockenspiel', 'oboe']
+    insts = ['oboe']
+    alphas = [0.2]
+    num_freqs = [None]
     # try no pos embedding
     num_snakes = [2]
-    modes = ['mae', 'snr', None]
+    modes = ['mae']
 
     steps_long = 20000
     steps_short = steps_long // 4
@@ -378,8 +387,10 @@ if __name__ == "__main__":
                 for ns in num_snakes:
                     for mode in modes:
                         prev_ckpt_path = None
-                        _              = train(experiment_path=exp_path, tag=f'{a}_{nf}_{mode}_full', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_long, decimation=1, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
-                        prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{nf}_{mode}_d8', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=8, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
-                        prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{nf}_{mode}_d4', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=4, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
-                        prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{nf}_{mode}_d2', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=2, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
-                        _              = train(experiment_path=exp_path, tag=f'{a}_{nf}_{mode}_d1', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=1, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        _              = train(experiment_path=exp_path, tag=f'quantize_full', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_long, decimation=1, num_sine=2, num_snake=1, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+
+                        # _              = train(experiment_path=exp_path, tag=f'{a}_{mode}_full', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_long, decimation=1, num_sine=0, num_snake=2, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{mode}_d8', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=8, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{mode}_d4', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=4, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{mode}_d2', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=2, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # _              = train(experiment_path=exp_path, tag=f'{a}_{mode}_d1', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=1, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)

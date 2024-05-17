@@ -314,29 +314,30 @@ class SirenWithSnakeTanh(nn.Module):
         '''
         Positional encoding
         '''
-        if num_freq is not None:
-            pos_out_dim = 2 * num_freq + 1
-            is_first = False
-            self.positional_encoding = PosEncodingNeRF(in_features=in_features,
-                                                        sidelength=None,
-                                                        fn_samples=None,
-                                                        use_nyquist=True,
-                                                        num_frequencies=num_freq,
-                                                        scale=scale)
-        else:
-            self.positional_encoding = nn.Identity()
-            pos_out_dim = in_features
-            is_first = True
+        # if num_freq is not None:
+        #     pos_out_dim = 2 * num_freq + 1
+        #     is_first = False
+        #     self.positional_encoding = PosEncodingNeRF(in_features=in_features,
+        #                                                 sidelength=None,
+        #                                                 fn_samples=None,
+        #                                                 use_nyquist=True,
+        #                                                 num_frequencies=num_freq,
+        #                                                 scale=scale)
+        # else:
+        #     self.positional_encoding = nn.Identity()
+        #     pos_out_dim = in_features
+        #     is_first = True
         '''
         First layer need to be sine for waveform
         '''
+        # in_features = pos_out_dim
         if first_linear:
-            fc = nn.Linear(pos_out_dim, hidden_features)
+            fc = nn.Linear(in_features, hidden_features)
             snake = Snake(hidden_features, a=50)
             self.net.append(fc)
             self.net.append(snake)
         else:
-            self.net.append(SineLayer(pos_out_dim, hidden_features, is_first=True, omega_0=first_omega_0))
+            self.net.append(SineLayer(in_features, hidden_features, is_first=True, omega_0=first_omega_0))
        
 
                
@@ -378,8 +379,9 @@ class SirenWithSnakeTanh(nn.Module):
     
     def forward(self, coords):
         coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
-        pos_coords = self.positional_encoding(coords)
-        output = self.net(pos_coords)
+        # pos_coords = self.positional_encoding(coords)
+        # output = self.net(pos_coords)
+        output = self.net(coords)
         # return output, coords   
         return output     
 
