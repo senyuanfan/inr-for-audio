@@ -86,6 +86,7 @@ class WaveformFitting(Dataset):
             self.data = self.data[:, 0]
         self.data = self.data.astype(np.float32)[0 : duration * self.sample_rate]
 
+        self.original_sample_rate = self.sample_rate
         # cutoff = 8000 # in Hz
         if decimation > 1:
             q = int(decimation)
@@ -101,7 +102,9 @@ class WaveformFitting(Dataset):
 
         self.coord = get_coord(len(self.data), 1)
 
-        print('waveform fitting sample rate:', self.sample_rate)
+        print('Original sample rate: ', self.original_sample_rate)
+        print('Training sample rate:', self.sample_rate)
+        print('Training coord shape: ', self.coord.shape)
 
     def get_num_samples(self):
         return self.coord.shape[0]

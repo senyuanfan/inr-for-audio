@@ -31,7 +31,7 @@ def plotspec(signal, fs, title):
     plt.xlabel('Time (s)')
     plt.ylabel('Frequency (Hz)')
 
-def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, method='wave', loss_mode='mse', mode=None, decimation=1, num_hidden_features=256, num_sine=2, num_snake=2, num_tanh=0, num_freq=64, omega=22000, first_linear=False, last_linear=True, hidden_omega=30, a_initial=0.5, total_steps=25000, learning_rate=1e-3, min_learning_rate=1e-6, alpha=0.0, prev_ckpt_path=None, visualization=False):
+def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, method='wave', loss_mode='mse', mode=None, decimation=1, bwe=False, num_hidden_features=256, num_sine=2, num_snake=2, num_tanh=0, num_freq=64, omega=22000, first_linear=False, last_linear=True, hidden_omega=30, a_initial=0.5, total_steps=25000, learning_rate=1e-3, min_learning_rate=1e-6, alpha=0.0, prev_ckpt_path=None, visualization=False):
 
     # mode: hp for wave, log for mdct
     filename = f'data/{inst}.wav'
@@ -59,7 +59,10 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
        
         input_data = WaveformFitting(filename, duration=duration, decimation=decimation)
         input_dimension = 1
-       
+
+        model_input_bwe = get_coord(input_data.original_sample_rate * duration, dim = 1)
+        print('bwe coord shape: ', model_input_bwe.shape)
+
         # if mode == 'lp':
         #     input_data = MultiWaveformFitting(filename, duration=duration, num_channels=num_channels, lp=True)
         # else:
@@ -124,6 +127,11 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
     """load input data to the model"""
     model_input, ground_truth = next(iter(dataloader))
     model_input, ground_truth = model_input.cuda(), ground_truth.cuda()
+    model_input_bwe = model_input_bwe.reshape(1, -1, 1).cuda()
+    print("bwe input dimension: ", model_input_bwe.shape)
+
+    
+    # get_coord(len(self.data), 1)
     gt_power = torch.mean(torch.square(model_input))
 
     """start timer and training, save the best model"""
@@ -212,6 +220,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
         
     """save best model output as the recovered signal"""   
     # convert 32-bit model to 16-bit model and calculate the size
+    """model quantization"""    
     # model_input = model_input.half()
     # best_model = best_model.half()
     # best_model.cuda()
@@ -224,7 +233,15 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
         buffer_size += buffer.nelement() * buffer.element_size()
     model_size = (param_size + buffer_size) / 1024 # convert to KB
 
-    final_model_output = best_model(model_input)
+    """inference step"""
+    # perform bandwidth extension by evaluating the model at higher sample rate
+    if bwe: # and in waveform mode
+        final_model_output = best_model(model_input_bwe)
+        recover_sample_rate = input_data.original_sample_rate
+    else:
+        final_model_output = best_model(model_input)
+        recover_sample_rate = input_data.sample_rate
+    
     if takelog:
         final_model_output = torch.exp(final_model_output)
     signal_recovered = final_model_output.cpu().detach()
@@ -239,9 +256,11 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
         output_filename = savename
 
         # wavfile.write(savename, input_spec.sample_rate, signal_recovered)
-        print('The input sample rate is: ', input_data.sample_rate)
+        # print('The input sample rate is: ', input_data.sample_rate)
+        # print('The recover sample rate is: ', recover_sample_rate)
         signal_recovered = signal_recovered.to(torch.float32)
-        torchaudio.save(savename, signal_recovered.reshape(input_data.width, input_data.height), input_data.sample_rate)
+        print('The recovered signal shape is: ', signal_recovered.shape)
+        torchaudio.save(savename, signal_recovered.reshape(input_data.width, input_data.height*decimation), recover_sample_rate)
     elif method=='mdct':
         spec_recovered = final_model_output.reshape(input_data.height, input_data.width) * input_data.scale + input_data.mean - input_data.shift
         spec_recovered = spec_recovered.cpu().detach().numpy()
@@ -268,11 +287,18 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
     
     # trim the reference signal length and decimate according to the decimation hyperparameter
     ref = ref[:int(fs_ref*duration - 1)]
-    ref = decimate(ref, q=decimation)
+    
+    if bwe:
+        d = 1
+    else:
+        d = decimation
+
+    ref = decimate(ref, q=d)
     # to resolve contrast issue in plotting
     ref = ref + 1e-5
-    fs_ref = fs_ref // decimation
+    fs_ref = fs_ref // d
     print("fs ref: ", fs_ref)
+    print("fs rec: ", fs_rec)
 
     print("reference signal shape", ref.shape)
     print("recovered signal shape", rec.shape)
@@ -329,6 +355,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
         'loss_mode': loss_mode,
         'mode': mode,
         'decimation': decimation,
+        'bwe': bwe,
         'num_hidden_features': num_hidden_features,
         'num_sine': num_sine,
         'num_snake': num_snake,
@@ -361,8 +388,8 @@ if __name__ == "__main__":
     3. update tag for each experiment
     4. when using method 'wave', set mode to 'hp' or 'lp'; when using method 'mdct', set mode to 'log' or None, for loss function, set mode to 'snr', 'mae' or None (by default mse)
     '''
-    exp_num = 68
-    note = 'quantize'
+    exp_num = 69
+    note = 'bwe'
     exp_path = f'results/{exp_num}_{note}'
     if( os.path.exists(exp_path) == False ):
         os.mkdir(exp_path)
@@ -387,10 +414,11 @@ if __name__ == "__main__":
                 for ns in num_snakes:
                     for mode in modes:
                         prev_ckpt_path = None
-                        _              = train(experiment_path=exp_path, tag=f'quantize_full', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_long, decimation=1, num_sine=2, num_snake=1, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        _              = train(experiment_path=exp_path, tag=f'base_2+2', inst=inst, duration=3, method='wave', loss_mode=mode, total_steps=steps_long, decimation=1, bwe=False, num_sine=2, num_snake=2, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        _              = train(experiment_path=exp_path, tag=f'base_4+0', inst=inst, duration=3, method='wave', loss_mode=mode, total_steps=steps_long, decimation=1, bwe=False, num_sine=4, num_snake=0, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
 
-                        # _              = train(experiment_path=exp_path, tag=f'{a}_{mode}_full', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_long, decimation=1, num_sine=0, num_snake=2, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
-                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{mode}_d8', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=8, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
-                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{mode}_d4', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=4, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
-                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'{a}_{mode}_d2', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=2, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
-                        # _              = train(experiment_path=exp_path, tag=f'{a}_{mode}_d1', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=1, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # # _              = train(experiment_path=exp_path, tag=f'procedual_full', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_long, decimation=1, num_sine=0, num_snake=2, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'procedual_d8', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=8, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'procedual_d4', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=4, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'procedual_d2', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=2, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
+                        # _              = train(experiment_path=exp_path, tag=f'procedual_d1', inst=inst, duration=5, method='wave', loss_mode=mode, total_steps=steps_short, decimation=1, num_sine=2, num_snake=ns, num_freq=nf, alpha=a, prev_ckpt_path=prev_ckpt_path)
