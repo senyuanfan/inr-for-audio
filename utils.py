@@ -124,6 +124,8 @@ class MultiWaveformFitting(Dataset):
         self.sample_rate, self.data = wavfile.read(filename)
         self.data = self.data.astype(np.float32)[: duration*self.sample_rate, :num_channels]
 
+        self.original_sample_rate = self.sample_rate
+
         if lp:
             q = 2
             decimated_channels = []
@@ -248,7 +250,7 @@ class MDCTFitting(Dataset):
         super().__init__()
         # Load the audio file
         self.sample_rate, self.data = wavfile.read(filename)
-
+        self.original_sample_rate = self.sample_rate
         if len(self.data.shape) > 1:
             self.data = self.data[:, 1]
 

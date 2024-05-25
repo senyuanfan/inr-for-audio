@@ -76,6 +76,10 @@ class ReLU(nn.Module):
         coords = coords.clone().detach().requires_grad_(True) # allows to take derivative w.r.t. input
         output = self.net(coords)
         return output, coords      
+
+class SineActivation(nn.Module):
+    def forward(self, input):
+        return torch.sin(30 * input)
     
 class SineLayer(nn.Module):
     # See paper sec. 3.2, final paragraph, and supplement Sec. 1.5 for discussion of omega_0.
@@ -305,7 +309,7 @@ class SirenWithSnakeTanh(nn.Module):
     MLP with Snake and Tanh activations
     '''
     def __init__(self, in_features, out_features, hidden_features, num_sine, num_snake, num_tanh, first_linear=False, last_linear=True, 
-                 first_omega_0=30, hidden_omega_0=30., a_initial=50, num_freq=32, scale=2.0):
+                 first_omega_0=30, hidden_omega_0=30., a_initial=50, num_freq=None, scale=2.0):
         super().__init__()
         
         self.net = []

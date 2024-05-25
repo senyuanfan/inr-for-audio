@@ -1,0 +1,3 @@
+[submodule "efficient-kan"]
+	path = efficient-kan
+	url = https://github.com/senyuanfan/efficient-kan.git
