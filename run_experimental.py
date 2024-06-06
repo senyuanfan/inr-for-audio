@@ -34,20 +34,25 @@ def plotspec(signal, fs, title):
     plt.xlabel('Time (s)')
     plt.ylabel('Frequency (Hz)')
 
-def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, method='wave', arch='mlp', loss_mode='mse', mode=None, decimation=1, bwe=False, num_hidden_features=256, num_sine=2, num_snake=2, num_tanh=0, num_freq=None, omega=22000, first_linear=False, last_linear=True, hidden_omega=30, a_initial=0.5, total_steps=20000, learning_rate=1e-3, min_learning_rate=1e-6, alpha=0.0, prev_ckpt_path=None, visualization=False):
+def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse', mode=None, decimation=1, bwe=False, num_hidden_features=256, num_sine=2, num_snake=2, num_tanh=0, num_freq=None, omega=22000, first_linear=False, last_linear=True, hidden_omega=30, a_initial=0.5, total_steps=20000, learning_rate=1e-3, min_learning_rate=1e-6, alpha=0.0, prev_ckpt_path=None, visualization=False):
 
     # mode: hp for wave, log for mdct
     filename = f'data/{inst}.wav'
-    experiment_folder = f'{experiment_path}/{inst}-{method}-{tag}'
+    experiment_folder = f'{experiment_path}/{inst}-{tag}'
 
     while( os.path.exists(experiment_folder) == True ):
         tag = tag + '(2)'
-        experiment_folder = f'{experiment_path}/{inst}-{method}-{tag}'
+        experiment_folder = f'{experiment_path}/{inst}-{tag}'
 
     os.mkdir(experiment_folder)
     takelog = False
     decimation = int(decimation)
-
+    
+    if num_freq is not None:
+        input_dimension = num_freq * 2
+    else:
+        input_dimension = 1
+        
     """load input data from file"""
     # sample_rate, _ = wavfile.read(filename)
 
@@ -58,70 +63,25 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
     1. input_audio_low (contains low sample rate coordinates), input_audio_high (contains full scale coordinates)
     2. dataloader_low, dataloader_high 
     '''
-    if method == 'wave':
+
        
-        input_data = WaveformFitting(filename, duration=duration, decimation=decimation)
-        input_dimension = 1
+    input_data = WaveformFitting(filename, duration=duration, decimation=decimation)
 
-        # if mode == 'lp':
-        #     input_data = MultiWaveformFitting(filename, duration=duration, num_channels=num_channels, lp=True)
-        # else:
-        #     input_data = MultiWaveformFitting(filename, duration=duration, num_channels=num_channels, lp=False)
-        # input_dimension = 2
+    # if mode == 'lp':
+    #     input_data = MultiWaveformFitting(filename, duration=duration, num_channels=num_channels, lp=True)
+    # else:
+    #     input_data = MultiWaveformFitting(filename, duration=duration, num_channels=num_channels, lp=False)
+    # input_dimension = 2
 
-        dataloader = DataLoader(input_data, shuffle=True, batch_size=1, pin_memory=True, num_workers=4)
+    dataloader = DataLoader(input_data, shuffle=True, batch_size=1, pin_memory=True, num_workers=4)
 
-    elif method == 'mdct':
-        N = 2048
-        if mode == 'log':
-            takelog = True
-        else:
-            takelog = False
 
-        input_data = MDCTFitting(filename, duration=duration, N=N, takelog=takelog)
-        dataloader = DataLoader(input_data, shuffle=True, batch_size=1, pin_memory=True, num_workers=4)
-        input_dimension = 2
-    else:
-        print('specify the correct fitting method as wave or mdct')
-
-    """initiate or load model and optimizer"""
-    if num_freq is not None:
-        input_dimension = num_freq * 2
-
-    if prev_ckpt_path is not None:
-        print("Loading model from:", prev_ckpt_path)
-        # if prev_ckpt_path is None or not isinstance(prev_ckpt_path, str):
-        #     raise ValueError("The checkpoint path is not set or not a string.")
-
-        # if not os.path.exists(prev_ckpt_path):
-        #     raise FileNotFoundError(f"The specified checkpoint file does not exist: {prev_ckpt_path}")
-
-        if arch == 'kan':
-            model = KAN([1, num_hidden_features, num_hidden_features, 1])
-        else:
-            model = SirenWithSnakeTanh(in_features=input_dimension, out_features=1, hidden_features=num_hidden_features, num_sine=num_sine, num_snake=num_snake, num_tanh=num_tanh, 
-                    num_freq=num_freq, first_linear=first_linear, last_linear=last_linear, first_omega_0=omega, hidden_omega_0=hidden_omega, a_initial=a_initial)
-        
-        
-        checkpoint = torch.load(prev_ckpt_path)
-        # Load state dictionary into the model and optimizer
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.cuda() # need to move model to cuda before the optimizer parameters get initiated
-
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=200, min_lr=min_learning_rate)
-
-    else:
-        if arch == 'kan':
-            model = KAN([1, num_hidden_features, num_hidden_features, 1])
-        else:
-            model = SirenWithSnakeTanh(in_features=input_dimension, out_features=1, hidden_features=num_hidden_features, num_sine=num_sine, num_snake=num_snake, num_tanh=num_tanh, 
-                    num_freq=num_freq, first_linear=first_linear, last_linear=last_linear, first_omega_0=omega, hidden_omega_0=hidden_omega, a_initial=a_initial)
-        
-        model.cuda()
-        optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=200, min_lr=min_learning_rate)
+    model = SirenWithSnakeTanh(in_features=input_dimension, out_features=1, hidden_features=num_hidden_features, num_sine=num_sine, num_snake=num_snake, num_tanh=num_tanh, 
+                num_freq=num_freq, first_linear=first_linear, last_linear=last_linear, first_omega_0=omega, hidden_omega_0=hidden_omega, a_initial=a_initial)
+    
+    model.cuda()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=200, min_lr=min_learning_rate)
 
 
     # summary(model)
@@ -150,6 +110,9 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, num_channels=1, 
         model_input = encoding(model_input)
         model_input_bwe = encoding(model_input_bwe)
 
+
+
+    
     # get_coord(len(self.data), 1)
     gt_power = torch.mean(torch.square(model_input))
 

@@ -9,7 +9,7 @@ import numpy as np
 from collections import OrderedDict
 
 import scipy.io.wavfile as wavfile
-
+import rff # for random fourier embedding in [https://github.com/jmclong/random-fourier-features-pytorch]
 
 class PosEncodingNeRF(nn.Module):
     '''Module to add positional encoding as in NeRF [Mildenhall et al. 2020].'''
@@ -331,13 +331,18 @@ class SirenWithSnakeTanh(nn.Module):
         #     self.positional_encoding = nn.Identity()
         #     pos_out_dim = in_features
         #     is_first = True
+
+        # if num_freq is not None:
+        #     encoding = rff.layers.GaussianEncoding(sigma=10.0, input_size=in_features, encoded_size=num_freq)
+        #     self.net.append(encoding)
+        #     in_features = num_freq*2 # update in_features to the output of positional encoding layer
         '''
         First layer need to be sine for waveform
         '''
         # in_features = pos_out_dim
         if first_linear:
             fc = nn.Linear(in_features, hidden_features)
-            snake = Snake(hidden_features, a=50)
+            snake = Snake(hidden_features, a=a_initial)
             self.net.append(fc)
             self.net.append(snake)
         else:
