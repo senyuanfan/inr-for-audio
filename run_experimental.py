@@ -27,17 +27,11 @@ def save_parameters(experiment_folder, **kwargs):
     with open(params_path, 'w') as file:
         json.dump(kwargs, file, indent=4)
 
-def plotspec(signal, fs, title):
-    # print('original signal shape', signal.shape)
-    plt.specgram(signal, NFFT=1024, noverlap=512, Fs=fs, mode='magnitude', scale='dB')
-    plt.title(title)
-    plt.xlabel('Time (s)')
-    plt.ylabel('Frequency (Hz)')
+def train(experiment_path:str, tag:str, inst:str, input_signal, input_fs, loss_mode='mse', decimation=1, bwe=False, num_hidden_features=256, num_sine=2, num_snake=2, num_tanh=0, num_freq=None, omega=22000, first_linear=False, last_linear=True, hidden_omega=30, a_initial=0.5, total_steps=20000, learning_rate=1e-3, min_learning_rate=1e-6, alpha=0.0, prev_ckpt_path=None, visualization=False):
 
-def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse', mode=None, decimation=1, bwe=False, num_hidden_features=256, num_sine=2, num_snake=2, num_tanh=0, num_freq=None, omega=22000, first_linear=False, last_linear=True, hidden_omega=30, a_initial=0.5, total_steps=20000, learning_rate=1e-3, min_learning_rate=1e-6, alpha=0.0, prev_ckpt_path=None, visualization=False):
-
-    # mode: hp for wave, log for mdct
-    filename = f'data/{inst}.wav'
+    '''
+    Create experiment folder
+    '''
     experiment_folder = f'{experiment_path}/{inst}-{tag}'
 
     while( os.path.exists(experiment_folder) == True ):
@@ -45,36 +39,18 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
         experiment_folder = f'{experiment_path}/{inst}-{tag}'
 
     os.mkdir(experiment_folder)
-    takelog = False
-    decimation = int(decimation)
     
     if num_freq is not None:
         input_dimension = num_freq * 2
     else:
         input_dimension = 1
-        
-    """load input data from file"""
-    # sample_rate, _ = wavfile.read(filename)
 
     '''
-    For procedual training, we need to fit the same model with lower sample rate & low passed data first,
-    and then fit the same model with higher sample rate and high-passed data.
-
-    1. input_audio_low (contains low sample rate coordinates), input_audio_high (contains full scale coordinates)
-    2. dataloader_low, dataloader_high 
+    Prepare input data
     '''
 
-       
-    input_data = WaveformFitting(filename, duration=duration, decimation=decimation)
-
-    # if mode == 'lp':
-    #     input_data = MultiWaveformFitting(filename, duration=duration, num_channels=num_channels, lp=True)
-    # else:
-    #     input_data = MultiWaveformFitting(filename, duration=duration, num_channels=num_channels, lp=False)
-    # input_dimension = 2
-
+    input_data = WaveformFittingExp(input_signal=input_signal, input_fs=input_fs, decimation=decimation, scale=100)
     dataloader = DataLoader(input_data, shuffle=True, batch_size=1, pin_memory=True, num_workers=4)
-
 
     model = SirenWithSnakeTanh(in_features=input_dimension, out_features=1, hidden_features=num_hidden_features, num_sine=num_sine, num_snake=num_snake, num_tanh=num_tanh, 
                 num_freq=num_freq, first_linear=first_linear, last_linear=last_linear, first_omega_0=omega, hidden_omega_0=hidden_omega, a_initial=a_initial)
@@ -83,7 +59,6 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=200, min_lr=min_learning_rate)
 
-
     # summary(model)
 
     """define loss function"""
@@ -91,11 +66,11 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
     mae = nn.L1Loss()
     mse = nn.MSELoss()
     snr = auraloss.time.SNRLoss()
-    mrstft = auraloss.freq.MultiResolutionSTFTLoss(perceptual_weighting=False, sample_rate=input_data.sample_rate)
-    # mrstft = auraloss.freq.STFTLoss()
+    # mrstft = auraloss.freq.MultiResolutionSTFTLoss(perceptual_weighting=False, sample_rate=input_data.sample_rate)
+    mrstft = auraloss.freq.STFTLoss()
 
     """produce bwe coordinates, only works under wave mode"""
-    model_input_bwe = get_coord(input_data.original_sample_rate * duration, dim = 1)
+    model_input_bwe = get_coord(len(input_signal), dim = 1)
     print('bwe coord shape: ', model_input_bwe.shape)
 
     """load input data to the model"""
@@ -111,11 +86,6 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
         model_input_bwe = encoding(model_input_bwe)
 
 
-
-    
-    # get_coord(len(self.data), 1)
-    gt_power = torch.mean(torch.square(model_input))
-
     """start timer and training, save the best model"""
     start_time = time.time()
     best_loss = float('inf')
@@ -127,7 +97,8 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
         
         model_output = model(model_input)
 
-        mrstft_loss = mrstft(model_output.view(1, 1, -1), ground_truth.view(1, 1, -1))
+        mrstft_loss = 0
+        # mrstft_loss = mrstft(model_output.view(1, 1, -1), ground_truth.view(1, 1, -1))
         if loss_mode == 'mae':
             mae_loss = mae(model_output, ground_truth)
             loss = (1 - alpha) * mae_loss + alpha * mrstft_loss
@@ -188,7 +159,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
     plt.plot(losses)
     plt.title(f'Training Loss, Best Iteration: {best_iter}, Total time: {total_time:.1f} min')
     plt.xlabel("Step")
-    plt.ylabel("Loss")
+    plt.ylabel("Loss (dB)")
     plt.xlim([0, total_steps])
 
     plt.subplot(2, 1, 2)
@@ -203,11 +174,13 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
         
     """save best model output as the recovered signal"""   
     # convert 32-bit model to 16-bit model and calculate the size
+
     """model quantization"""    
     # model_input = model_input.half()
     # best_model = best_model.half()
     # best_model.cuda()
 
+    """model size calculation"""
     param_size = 0
     buffer_size = 0
     for param in best_model.parameters():
@@ -225,8 +198,6 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
         final_model_output = best_model(model_input)
         recover_sample_rate = input_data.sample_rate
     
-    if takelog:
-        final_model_output = torch.exp(final_model_output)
     signal_recovered = final_model_output.cpu().detach()
     # print("signal recovered shape: ", signal_recovered.shape)
     # print("signal recovered dtype: ", signal_recovered.dtype)
@@ -234,46 +205,32 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
     # print("signal min: ", np.min(signal_recovered.numpy()))
 
     """save the recovered output signal"""
-    if method == 'wave':
-        savename = f'{experiment_folder}/output.wav'
-        output_filename = savename
 
-        # wavfile.write(savename, input_spec.sample_rate, signal_recovered)
-        # print('The input sample rate is: ', input_data.sample_rate)
-        # print('The recover sample rate is: ', recover_sample_rate)
-        signal_recovered = signal_recovered.to(torch.float32)
-        print('The recovered signal shape is: ', signal_recovered.shape)
-        if bwe:
-            torchaudio.save(savename, signal_recovered.reshape(input_data.width, input_data.height*decimation), recover_sample_rate)
-        else:
-            torchaudio.save(savename, signal_recovered.reshape(input_data.width, input_data.height), recover_sample_rate)
+    savename = f'{experiment_folder}/output.wav'
+    output_filename = savename
 
-    elif method == 'mdct':
-        spec_recovered = final_model_output.reshape(input_data.height, input_data.width) * input_data.scale + input_data.mean - input_data.shift
-        spec_recovered = spec_recovered.cpu().detach().numpy()
-        if takelog:
-            # spec_recovered = np.power(10, spec_recovered)
-            spec_recovered = np.exp(spec_recovered)
+    # wavfile.write(savename, input_spec.sample_rate, signal_recovered)
+    # print('The input sample rate is: ', input_data.sample_rate)
+    # print('The recover sample rate is: ', recover_sample_rate)
+    signal_recovered = signal_recovered.to(torch.float32) * input_data.scale
 
-        print("maximum mdct magnitude: ", np.max(spec_recovered))
-        signal_recovered = mdct.ISTMDCT(spec_recovered, N=N).reshape(-1, 1).astype(np.float32)
+    signal_residual = input_signal - signal_recovered.squeeze().numpy() # assuming the input signal is lowpassed
 
-        savename = f'{experiment_folder}/output.wav'
-        output_filename = savename
-
-        wavfile.write(savename, input_data.sample_rate, signal_recovered)
+    print('The recovered signal shape is: ', signal_recovered.shape)
+    if bwe:
+        torchaudio.save(savename, signal_recovered.reshape(input_data.width, input_data.height*decimation), recover_sample_rate)
     else:
-        print('specify the correct fitting method as wave or mdct')
+        torchaudio.save(savename, signal_recovered.reshape(input_data.width, input_data.height), recover_sample_rate)
 
 
     """save the spectrogram comparison and the waveform comparison"""
-    # fs, ref = wavfile.read(filename)  
-    # will automatically convert loaded signal tomono
-    ref, fs_ref = librosa.load(filename, sr=None)
+    # librosa.load will automatically convert loaded signal to mono
+    ref = input_signal
+    fs_ref = input_fs
     rec, fs_rec = librosa.load(output_filename, sr=None)
     
     # trim the reference signal length and decimate according to the decimation hyperparameter
-    ref = ref[:int(fs_ref*duration - 1)]
+    # ref = ref[:-1]
     
     if bwe:
         d = 1
@@ -290,6 +247,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
     print("reference signal shape", ref.shape)
     print("recovered signal shape", rec.shape)
 
+    """plot spectrogram"""
     plt.figure(figsize=(6,10))
     plt.subplots_adjust(left=0.2, bottom=0.1, right=0.8, 
                         top=0.9, wspace=0.4,hspace=0.4)
@@ -302,7 +260,7 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
     savename = f'{experiment_folder}/spec.png'
     plt.savefig(savename)
 
-
+    """plot waveform"""
     plt.figure(figsize=(6,10))
     plt.subplots_adjust(left=0.2, bottom=0.1, right=0.8, 
                         top=0.9, wspace=0.4,hspace=0.4)
@@ -336,12 +294,12 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
         'experiment_path': experiment_path,
         'tag': tag,
         'inst': inst,
-        'duration': duration,
-        'num_channels': num_channels,
-        'method': method,
-        'arch': arch,
+        # 'duration': duration,
+        # 'num_channels': num_channels,
+        # 'method': method,
+        # 'arch': arch,
         'loss_mode': loss_mode,
-        'mode': mode,
+        # 'mode': mode,
         'decimation': decimation,
         'bwe': bwe,
         'num_hidden_features': num_hidden_features,
@@ -365,7 +323,8 @@ def train(experiment_path:str, tag:str, inst:str, duration:int, loss_mode='mse',
     }
     save_parameters(experiment_folder, **params)
 
-    return ckpt_path
+    
+    return {'ckpt':ckpt_path, 'ref':ref, 'rec':rec, 'res':signal_residual}
 
 
 
@@ -375,63 +334,73 @@ if __name__ == "__main__":
     1. update exp_num
     2. update note
     3. update tag for each experiment
-    4. when using method 'wave', set mode to 'hp' or 'lp'; when using method 'mdct', set mode to 'log' or None, for loss function, set mode to 'snr', 'mae' or None (by default mse)
     '''
-    exp_num = 77
-    note = 'hierarchy'
+    exp_num = 86
+    note = 'basic'
     exp_path = f'results/{exp_num}_{note}'
     if( os.path.exists(exp_path) == False ):
         os.mkdir(exp_path)
 
 
     # insts = ['castanets', 'oboe', 'glockenspiel', 'violin']
-    insts = ['oboe']
-    # alphas = [0]
+    insts = ['oboe', 'castanets']
+    # alphas = [0],
     # num_freqs = [None]
     # num_snakes = [2]
     # modes = ['mse']
 
-    steps_long = 20000
-    steps_short = steps_long // 4
+    steps = 20000
+
+    num_samples = 44100 * 10
+    start_position = 0 # in seconds for waveform input
+
+    omega = 1000
+    num_hidden_features = 16
 
     for inst in insts:
         prev_ckpt_path = None
 
-        _ = train(experiment_path=exp_path, tag=f'short-full', inst=inst, duration=1, method='wave', total_steps=steps_long, loss_mode='mse', alpha=0, num_sine=2, num_snake=2)
-        _ = train(experiment_path=exp_path, tag=f'long-full', inst=inst, duration=2, method='wave', total_steps=steps_long, loss_mode='mse', alpha=0, num_sine=2, num_snake=2)
-        _ = train(experiment_path=exp_path, tag=f'long-d2', inst=inst, duration=2, decimation=2, method='wave', total_steps=steps_long, loss_mode='mse', alpha=0, num_sine=2, num_snake=2)
+        filename = f'data/{inst}.wav'
+        signal, fs = librosa.load(filename, sr=None)
+        signal = signal.astype(np.float32)[int(start_position * fs) : int(start_position * fs) + num_samples]
 
 
+        # output = train(experiment_path=exp_path, tag=f'full', inst=inst, input_signal=signal, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=2, num_snake=2, omega=1000)
+        # signal_lp = lpfilter(signal, 10000, fs)
+        # output_lp = train(experiment_path=exp_path, tag=f'lp', inst=inst, input_signal=signal_lp, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=2, num_snake=2, omega=3000)
+        # # signal_res = output['residual']
+        # signal_hp = hpfilter(signal, 10000, fs)
+        # output_hp = train(experiment_path=exp_path, tag=f'hp', inst=inst, input_signal=signal_hp, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=2, num_snake=2, omega=20000)
 
-        # set num_freq to 128, will map input coordinate of 128 **pairs** of encodings [cos(2πBv),sin(2πBv)] with B randomly selected form gaussian distribution
-        # _ = train(experiment_path=exp_path, tag=f'fe_snake_256_mix', inst=inst, duration=10, method='wave', total_steps=steps_long, loss_mode='mae', alpha=0.2, num_freq=256, first_linear=False, num_sine=0, num_snake=4)
-        # _ = train(experiment_path=exp_path, tag=f'fe_snake_256', inst=inst, duration=10, method='wave', total_steps=steps_long, loss_mode='mse', alpha=0, num_freq=256, first_linear=False, num_sine=0, num_snake=4)
-        # _ = train(experiment_path=exp_path, tag=f'fe_snake_128', inst=inst, duration=10, method='wave', total_steps=steps_long, loss_mode='mse', alpha=0, num_freq=128, first_linear=False, num_sine=0, num_snake=4)
-        # _ = train(experiment_path=exp_path, tag=f'fe_snake_64', inst=inst, duration=10, method='wave', total_steps=steps_long, loss_mode='mse', alpha=0, num_freq=64, first_linear=False, num_sine=0, num_snake=4)
 
-        # _ = train(experiment_path=exp_path, tag=f'[01]mse', inst=inst, duration=5, method='mdct', total_steps=steps_long, num_sine=4, num_snake=0,  loss_mode='mse', alpha=0, prev_ckpt_path=prev_ckpt_path)
-        # _ = train(experiment_path=exp_path, tag=f'[02]mae', inst=inst, duration=5, method='mdct', total_steps=steps_long, num_sine=4, num_snake=0,  loss_mode='mae', alpha=0, prev_ckpt_path=prev_ckpt_path)
+    #     _ = train(experiment_path=exp_path, tag=f'full', inst=inst, input_signal=signal, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=1, num_snake=0, omega=omega)
+    #     _ = train(experiment_path=exp_path, tag=f'full_snake', inst=inst, input_signal=signal, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=0, num_snake=1, omega=omega)
+    #     _ = train(experiment_path=exp_path, tag=f'd2', inst=inst, input_signal=signal, input_fs=fs, decimation=2, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=1, num_snake=0, omega=omega)
 
-        # _ = train(experiment_path=exp_path, tag=f'[03]first_linear', inst=inst, duration=5, method='wave', total_steps=steps_long, first_linear=True, num_sine=4, num_snake=0, num_tanh=0, loss_mode='mse', alpha=0, prev_ckpt_path=prev_ckpt_path, vis=True)
-        # _ = train(experiment_path=exp_path, tag=f'[04]sine', inst=inst, duration=5, method='wave', total_steps=steps_long, num_sine=4, num_snake=0, num_tanh=0, loss_mode='mse', alpha=0, prev_ckpt_path=prev_ckpt_path, visualization=True)
-        # _ = train(experiment_path=exp_path, tag=f'[05]snake', inst=inst, duration=5, method='wave', total_steps=steps_long, num_sine=0, num_snake=4, num_tanh=0, loss_mode='mse', alpha=0, prev_ckpt_path=prev_ckpt_path, visualization=True)
-        # # _ = train(experiment_path=exp_path, tag=f'[06]tanh', inst=inst, duration=5, method='wave', total_steps=steps_long, num_sine=0, num_snake=0, num_tanh=4, loss_mode='mse', alpha=0, prev_ckpt_path=prev_ckpt_path, visualization=True)
-        # _ = train(experiment_path=exp_path, tag=f'[07]mix_sine_snake', inst=inst, duration=5, method='wave', total_steps=steps_long, num_sine=2, num_snake=2, num_tanh=0, loss_mode='mse', alpha=0, prev_ckpt_path=prev_ckpt_path, visualization=True)
-        
-        # _ = train(experiment_path=exp_path, tag=f'[08]full_mse', inst=inst, duration=5, method='wave', total_steps=steps_long, loss_mode='mse', alpha=0, prev_ckpt_path=prev_ckpt_path)
-        # _ = train(experiment_path=exp_path, tag=f'[09]full_mae', inst=inst, duration=5, method='wave', total_steps=steps_long, loss_mode='mae', alpha=0, prev_ckpt_path=prev_ckpt_path)
-        # _ = train(experiment_path=exp_path, tag=f'[10]full_mrstft', inst=inst, duration=5, method='wave', total_steps=steps_long, loss_mode='mae', alpha=1.0, prev_ckpt_path=prev_ckpt_path)
+    
+    t = np.arange(num_samples)
+    f = 440
+    signal = np.sin(2 * np.pi * t * f / fs)
+    _ = train(experiment_path=exp_path, tag=f'{f}', inst='sine', input_signal=signal, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=1, num_snake=0, omega=3000)
+    
+    f = 20000
+    signal = np.sin(2 * np.pi * t * f / fs)
+    _ = train(experiment_path=exp_path, tag=f'{f}', inst='sine_w1k', input_signal=signal, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=1, num_snake=0, omega=1000)
 
-        # _ = train(experiment_path=exp_path, tag=f'[11]mix_mae_mrstft', inst=inst, duration=10, method='wave', total_steps=steps_long, loss_mode='mae', alpha=0.01)
+    f = 20000
+    signal = np.sin(2 * np.pi * t * f / fs)
+    _ = train(experiment_path=exp_path, tag=f'{f}', inst='sine_w3k', input_signal=signal, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=1, num_snake=0, omega=3000)
 
-        # prev_ckpt_path = None
-        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'[12]procedual_mse_mix_d8', inst=inst, duration=5, method='wave', loss_mode='mse', total_steps=steps_short, decimation=8, alpha=0.2, prev_ckpt_path=prev_ckpt_path)
-        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'[12]procedual_mse_mix_d4', inst=inst, duration=5, method='wave', loss_mode='mse', total_steps=steps_short, decimation=4, alpha=0.2, prev_ckpt_path=prev_ckpt_path)
-        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'[12]procedual_mse_mix_d2', inst=inst, duration=5, method='wave', loss_mode='mse', total_steps=steps_short, decimation=2, alpha=0.2, prev_ckpt_path=prev_ckpt_path)
-        # _              = train(experiment_path=exp_path, tag=f'[12]procedual_mse_mix_d1', inst=inst, duration=5, method='wave', loss_mode='mse', total_steps=10000, decimation=1, alpha=0.2, prev_ckpt_path=prev_ckpt_path)
 
-        # prev_ckpt_path = None
-        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'[13]procedual_mse_d8', inst=inst, duration=5, method='wave', loss_mode='mse', total_steps=steps_short, decimation=8, alpha=0, prev_ckpt_path=prev_ckpt_path)
-        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'[13]procedual_mse_d4', inst=inst, duration=5, method='wave', loss_mode='mse', total_steps=steps_short, decimation=4, alpha=0, prev_ckpt_path=prev_ckpt_path)
-        # prev_ckpt_path = train(experiment_path=exp_path, tag=f'[13]procedual_mse_d2', inst=inst, duration=5, method='wave', loss_mode='mse', total_steps=steps_short, decimation=2, alpha=0, prev_ckpt_path=prev_ckpt_path)
-        # _              = train(experiment_path=exp_path, tag=f'[13]procedual_mse_d1', inst=inst, duration=5, method='wave', loss_mode='mse', total_steps=10000, decimation=1, alpha=0, prev_ckpt_path=prev_ckpt_path)
+    f = 20000
+    signal = np.sin(2 * np.pi * t * f / fs)
+    _ = train(experiment_path=exp_path, tag=f'{f}', inst='sine_w6k', input_signal=signal, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=1, num_snake=0, omega=6000)
+
+
+    f = 20000
+    signal = np.sin(2 * np.pi * t * f / fs)
+    _ = train(experiment_path=exp_path, tag=f'{f}', inst='sine_w10k', input_signal=signal, input_fs=fs, num_hidden_features=num_hidden_features, total_steps=steps, loss_mode='mse', alpha=0, num_sine=1, num_snake=0, omega=10000)
+
+   
+
+

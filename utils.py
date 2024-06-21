@@ -22,6 +22,13 @@ import mdct
 
 from torchsummary import summary
 
+def plotspec(signal, fs, title):
+    # print('original signal shape', signal.shape)
+    plt.specgram(signal, NFFT=2048, noverlap=512, Fs=fs, mode='magnitude', scale='dB')
+    plt.title(title)
+    plt.xlabel('Time (s)')
+    plt.ylabel('Frequency (Hz)')
+    plt.colorbar(label='Intensity (dB)')
 
 def visualizer(data2d, savename, cmap='viridis'):
     '''
@@ -67,18 +74,40 @@ def Intensity(spl):
     # for MDCT magnitude
     return 10 ** ((spl-96) / 20)
 
-def get_coord(sidelen, dim=2):
+def calculate_snr(original_signal, noisy_signal):
+    # Ensure the signals are numpy arrays
+    original_signal = np.asarray(original_signal)
+    noisy_signal = np.asarray(noisy_signal)
+    
+    # Calculate the noise
+    noise = noisy_signal - original_signal
+    
+    # Calculate the power of the original signal
+    signal_power = np.mean(original_signal ** 2)
+    
+    # Calculate the power of the noise
+    noise_power = np.mean(noise ** 2)
+    
+    # Calculate the SNR
+    snr = signal_power / noise_power
+    
+    # Convert SNR to decibels
+    snr_db = 10 * np.log10(snr)
+    
+    return snr_db
+
+def get_coord(sidelen, dim=2, scale=1):
     """
     Generates a flattened grid of (x,y,...) coordinates in a range of -1 to 1.
     sidelen: int
     dim: int
     """
-    tensors = tuple(dim * [torch.linspace(-1, 1, steps=sidelen)])
+    tensors = tuple(dim * [torch.linspace(-1*scale, 1*scale, steps=sidelen)])
     coord = torch.stack(torch.meshgrid(*tensors, indexing='ij'), dim=-1) # added indexing='ij' to eliminate warning
     coord = coord.reshape(-1, dim)
     # print("mgrid shape:", mgrid.shape)
     return coord
-    
+
 class WaveformFitting(Dataset):
     def __init__(self, filename, duration, decimation=1):
         self.sample_rate, self.data = wavfile.read(filename)
@@ -119,6 +148,41 @@ class WaveformFitting(Dataset):
         amplitude = torch.Tensor(amplitude).view(-1, 1)
         return self.coord, amplitude
 
+class WaveformFittingExp(Dataset):
+    def __init__(self, input_signal, input_fs, decimation=1, scale=1):
+        '''
+        Takes 1D input signal, perform normalization and calculate corresponding time coordinates (ranging from -1 to 1) for INR training
+        '''
+        self.original_sample_rate = input_fs
+        if decimation > 1:
+            q = int(decimation)
+            # self.data = lpfilter(self.data, cutoff, self.sample_rate)
+            self.data = decimate(input_signal, q=q)
+            self.sample_rate = input_fs // q
+        else:
+            self.data = input_signal
+            self.sample_rate = input_fs
+
+        self.scale = np.max(np.abs(self.data))
+        self.data = torch.Tensor(self.data/self.scale).view(-1, 1)
+
+        self.height = len(self.data)
+        self.width = 1
+
+        self.coord = get_coord(self.height, self.width, scale=100)
+
+        print('Training sample rate:', self.sample_rate)
+        print('Training coord shape: ', self.coord.shape)
+
+    def get_num_samples(self):
+        return self.coord.shape[0]
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, idx):
+        return self.coord, self.data
+    
 class MultiWaveformFitting(Dataset):
     def __init__(self, filename, duration, num_channels, lp=False):
         self.sample_rate, self.data = wavfile.read(filename)

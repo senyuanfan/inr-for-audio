@@ -303,7 +303,6 @@ class Siren(nn.Module):
 
         return activations
 
-
 class SirenWithSnakeTanh(nn.Module):
     '''
     MLP with Snake and Tanh activations
